@@ -1,0 +1,11 @@
+{
+	"name": "gchunt",
+	"description": "A tool to post-process D compiler's GC usage log",
+	"copyright": "Copyright © 2014, Dmitry Olshansky",
+	"authors": ["Dmitry Olshansky"],
+	"dependencies": {
+    "libdparse": ">=0.1.1"
+	},
+  "targetType" : "executable",
+  "targetName" : "gchunt"
+}

@@ -90,10 +90,24 @@ string gitHEAD()
     return m[1];
 }
 
+string gitRemotePath()
+{
+    auto ret = execute(["git", "remote", "-v"]);
+    enforce(ret.status == 0);
+    auto m = ret.output.matchFirst(`origin\s*(.+) \(fetch\)`);
+    enforce(m, "broken git log");
+    //NOTE: matching others remotes can be hacked here
+    m = m[1].matchFirst(`github.com[:/](.*)/(\S+)\.git`);
+    enforce(m, "failed to find origin remote");
+    return m[1]~"/"~m[2];
+}
+
 
 void main(){
-    string gitHash = gitHEAD;
-    string gitRepo = `https://github.com/D-Programming-Language/`;
+    string fmt = "mediawiki";
+    string gitHost = `https://github.com`;
+    string gitHash = gitHEAD();
+    string gitRepo = gitRemotePath();
     auto re = regex(`(.*[\\/]\w+)\.d\((\d+)\):\s*vgc:\s*(.*)`);
     //writeln(`std\variant.d(236): vgc: 'new' causes GC allocation`.match(re));
     Result[] results;
@@ -108,7 +122,7 @@ void main(){
     results = uniq(results).array;
 
     string linkTemplate =
-`[%s/phobos/blob/%s/%s.d#L%s %s]`;
+`[%s/%s/blob/%s/%s.d#L%s %s]`;
     writeln(`
 {| class="wikitable"
 ! Module
@@ -121,7 +135,7 @@ void main(){
         auto mod = r.file.replace("/", ".");
         auto artifact = findAtrifact(r);
         if(!artifact.endsWith("unittest")){
-            auto link = format(linkTemplate, gitRepo, gitHash, r.file, r.line, mod);
+            auto link = format(linkTemplate, gitHost, gitRepo, gitHash, r.file, r.line, mod);
             writef("|%s\n|%s\n|%s\n| ???\n|-\n", link, artifact, r.reason);
         }
     }
