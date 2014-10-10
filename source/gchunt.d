@@ -10,6 +10,11 @@ module gchunt;
 import std.conv, std.stdio, std.string, std.exception,
     std.regex, std.algorithm, std.range, std.process;
 
+static import std.file;
+
+// libdparse:
+import std.d.lexer;
+
 struct Result{
     string file, line, reason;
 }
@@ -42,26 +47,39 @@ size_t walkUp(string[] lines, int indent, size_t current)
 
 string findAtrifact(ref Result r)
 {
-    auto lines = File(r.file ~ ".d")
-        .byLine
-        .map!(x => x.idup).array;
+    auto data = cast(ubyte[])std.file.read(r.file ~ ".d");
+    auto lines = (cast(string)data).split("\n");
     size_t start = to!size_t(r.line)-1;
     // while indented at least once - step up!
     size_t current = walkUp(lines, 1, start);
     //now we are at top-most decl
 
-    // Yet another hackish heuristic:
-    // if it's a struct, class or tempalte
-    // we need to re-walk again but with 2 indents ;)
-    auto m = lines[current].matchFirst(`^(?:(?:@(?:trusted|safe)|nothrow|pure|final|abstract|private|public|package)\s*)*(?:struct|class|template)\s*(\w+)`);
+    // all above the current line
+    string upper_half = join(lines[current..start]);
     string parent = "";
-    if(m)
-    {
-        parent = m[1];
-        current = walkUp(lines, 2, start);
-    }
+    auto interned = StringCache(2048);
+    auto config = LexerConfig(r.file~".d", StringBehavior.compiler);
+
+    //BUG: libdparse only takes mutable bytes ?!! WAT, seriously
+    auto tokens = getTokensForParser(data,
+        config, &interned);
+    auto tk_upper = find!(t => t.line == current + 1)(tokens);
+    auto tk_current = find!(t => t.line == start + 1)(tokens);
+    assert(tk_upper.length > tk_current.length);
+    auto len = tk_upper.length - tk_current.length;
+    auto head = tk_upper[0..len];
+    size_t balance = count(head.map!(x=>x.type), tok!"{") 
+    - count(head.map!(x=>x.type), tok!"}");
+    auto fullLen = len + 1 + countUntil!((x){
+        if(x.type == tok!"{")
+            balance++;
+        else if(x.type == tok!"}")
+            balance--;
+        return balance == 0;
+    })(tk_current);
+    stderr.writeln(tk_upper[0..fullLen].map!(x => str(x.type)));
     //r.line = to!string(current+1); // line number
-    auto sig = lines[current].matchFirst(
+    /*auto sig = lines[current].matchFirst(
 `^\s*(?:(?:private|public|package|static|final|@(?:property|safe|trusted|nogc|system)|template)\s*)*(\S+)(?:\s+(\w+))?`);
     if(!sig){
         stderr.writefln("%s.d(%s):***\t%s", r.file, r.line, lines[current]);
@@ -78,7 +96,8 @@ string findAtrifact(ref Result r)
             signature = parent ~ "." ~ signature;
 
         return signature;
-    }
+    }*/
+    return "***";
 }
 
 string gitHEAD()
