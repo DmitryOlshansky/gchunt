@@ -45,6 +45,7 @@ size_t walkUp(string[] lines, int indent, size_t current)
     return current;
 }
 
+
 string findAtrifact(ref Result r)
 {
     auto data = cast(ubyte[])std.file.read(r.file ~ ".d");
@@ -121,7 +122,9 @@ string gitRemotePath()
     return m[1]~"/"~m[2];
 }
 
-
+version(unittest)
+    void main(){}
+else
 void main(){
     string fmt = "mediawiki";
     string gitHost = `https://github.com`;
