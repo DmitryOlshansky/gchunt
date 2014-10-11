@@ -80,37 +80,6 @@ DMatcher builtinType(){
 }
 
 /++
- unaryExpression:
-       primaryExpression
-     | '&' unaryExpression
-     | '!' unaryExpression
-     | '*' unaryExpression
-     | '+' unaryExpression
-     | '-' unaryExpression
-     | '~' unaryExpression
-     | '++' unaryExpression
-     | '--' unaryExpression
-     | newExpression
-     | deleteExpression
-     | castExpression
-     | assertExpression
-     | functionCallExpression
-     | sliceExpression
-     | indexExpression
-     | '(' type ')' '.' identifierOrTemplateInstance
-     | unaryExpression '.' identifierOrTemplateInstance
-     | unaryExpression '--'
-     | unaryExpression '++'
-+/
-
-
-DMatcher revAssignExpression(){
-    with(factory){
-        return dot; //FIXME
-    }
-}
-
-/++
 DFunc:
     (storageClass | type) Identifier templateParameters parameters 
     memberFunctionAttribute* constraint? 
@@ -154,7 +123,14 @@ DMatcher reverseFuncDeclaration(){
                 `!(a,b,c)`, `!zyx`, `!super`
             );
         }
-
+        auto functionAttribute = any(atAttribute, dtok!"pure", dtok!"nothrow");
+        auto memberFuncAttr = any(
+            functionAttribute,
+            dtok!"immutable",
+            dtok!"inout",
+            dtok!"shared",
+            dtok!"const"
+        );
         auto typeConstructor = any(dtok!"const", dtok!"immutable",
             dtok!"inout", dtok!"shared", dtok!"scope");
         /++
@@ -263,7 +239,7 @@ DMatcher reverseFuncDeclaration(){
                 `typeof(return).name!foo`, `typeof(ac).xyz`, 
                 `.name!(abc())`, `bar!yxz`
             );
-        auto assignExpression = revAssignExpression;
+        
         /++
              '*'
              | '[' type? ']' // fuck it, old attribute syntax
@@ -276,27 +252,149 @@ DMatcher reverseFuncDeclaration(){
             revBalanced(dtok!"[", dtok!"]"),
             revSeq(
                 any(dtok!"delegate", dtok!"function"), revBalanced,
-
             )
         );
-
-        auto memberFuncAttr = any(); // forward-ref
-        auto primeExpr = any();
-        auto unaryExpr = any();
-        unaryExpr ~= revSeq(
-            cast(DMatcher)any( // BUG: array literal type deduction in DMD
-                dtok!"&", dtok!"!",dtok!"*",dtok!"+",dtok!"-",dtok!"~",
-                dtok!"++", dtok!"--"
-            ),
-            unaryExpr
-        );
-        unaryExpr ~= revSeq(
-
-        );
-        
         //attribute? type2 typeSuffix*
         type ~= revSeq(attribute.optional, type2, typeSuffix.star);
 
+        version(unittest)
+            type.checkRevParse();
+        /++
+         identifierOrTemplateInstance
+         | '.' identifierOrTemplateInstance
+         | basicType '.' Identifier
+         | typeofExpression
+         | typeidExpression
+         | vector
+         | arrayLiteral
+         | assocArrayLiteral
+         | '(' expression ')'
+         | isExpression
+         | lambdaExpression
+         | functionLiteralExpression
+         | traitsExpression
+         | mixinExpression
+         | importExpression
+         | '$'
+         | 'this'
+         | 'super'
+         | 'null'
+         | 'true'
+         | 'false'
+         | '__DATE__'
+         | '__TIME__'
+         | '__TIMESTAMP__'
+         | '__VENDOR__'
+         | '__VERSION__'
+         | '__FILE__'
+         | '__LINE__'
+         | '__MODULE__'
+         | '__FUNCTION__'
+         | '__PRETTY_FUNCTION__'
+         | IntegerLiteral
+         | FloatLiteral
+         | StringLiteral+
+         | CharacterLiteral
+        +/
+        auto primeExpr = any(
+            dtok!"intLiteral", dtok!"characterLiteral",
+            dtok!"stringLiteral", dtok!"floatLiteral",
+            dtok!"__DATE__", dtok!"__EOF__", dtok!"__FILE__", dtok!"__FUNCTION__",
+            dtok!"__PRETTY_FUNCTION__", dtok!"__TIME__", dtok!"__TIMESTAMP__",
+            dtok!"__VENDOR__", dtok!"__VERSION__",
+            dtok!"$", dtok!"this", dtok!"super", 
+            dtok!"null", dtok!"true", dtok!"false",
+            revSeq(builtinType, dtok!".", dtok!"identifier"),
+            // typeid, typeof, vector, is, mixin, __traits expressions
+            revSeq(
+                any(
+                    dtok!"typeid", dtok!"typeof", dtok!"__vector", 
+                    dtok!"is", dtok!"mixin", dtok!"__traits"
+                ),
+                revBalanced
+            ),
+            //TODO: lambda expression
+            // functionLiteral expression
+            revSeq(
+                revSeq(any(dtok!"function", dtok!"delegate"), type.optional).optional,
+                revSeq(revBalanced, functionAttribute.star).optional,
+                //TODO: in/out/body 
+                revBalanced(dtok!"{", dtok!"}")
+            ),
+            // array & AA literals
+            revBalanced(dtok!"[", dtok!"]"),
+            idOrTemplateChain,
+            revBalanced // expression
+        );
+        version(unittest)
+            primeExpr.checkRevParse(
+                `int.abc`, `typeof(a.b)`, `ad!(ab,c)`, `(a+b*(cd()))`,
+                `typeid(a+34231())`, `__vector()`, `is(a:b-)`,
+                `(())`, `abc!(xa3()())`, `__traits(234134,fgd-9-=_())`,
+                `()nothrow pure{ absfgsd ()[ }`, `function (int a){}`,
+                `function {{}{}}`
+            );
+
+        auto unaryExpr = seq();
+        /++
+            baseClass:
+                (typeofExpression '.')? identifierOrTemplateChain
+            newExpression:
+                'new' type ('[' assignExpression ']' | arguments)?
+                | newAnonClassExpression
+            newAnonClassExpression:
+                'new' arguments? 'class' arguments? baseClassList? structBody
+        +/
+        auto baseClass = revSeq(
+            revSeq(typeofExpression, dtok!".").optional, idOrTemplateChain
+        );
+         // core part of unary expr
+        auto unaryExpr2 = any(
+            revSeq(
+                dtok!"new", type, 
+                any(
+                    revBalanced(dtok!"[", dtok!"]"), 
+                    revBalanced.optional
+                )
+            ),
+            revSeq(
+                dtok!"new", revBalanced.optional, dtok!"class", revBalanced.optional, 
+                // base classes list
+                revSeq(baseClass, revSeq(dtok!",", baseClass).optional),
+                // class body
+                revBalanced(dtok!"{", dtok!"}")
+            ),
+            funcCallExpr,
+            revSeq(
+                dtok!"(", type, dtok!")", dtok!".",
+                idOrTemplateChain
+            ),
+            revSeq(dtok!"assert", revBalanced),
+
+            primeExpr // last thing to try
+        );
+        auto castQualifier = any(
+            dtok!"const", dtok!"inout", dtok!"shared", dtok!"immutable", dtok!""
+        ).star;
+        // *-adornments on top of core unary expr
+        unaryExpr ~= revSeq(
+            any(      
+                dtok!"&", dtok!"!",dtok!"*",dtok!"+",dtok!"-",dtok!"~",
+                dtok!"++", dtok!"--", dtok!"delete",
+                revSeq(
+                    dtok!"cast", dtok!"(", 
+                    any(type, castQualifier).optional, dtok!")"
+                )
+            ).star,
+            unaryExpr2,
+            any(
+                dtok!"++", dtok!"--", 
+                revSeq(dtok!".", idOrTemplateChain),
+                // or slice/index exprs
+                revBalanced(dtok!"[", dtok!"]")
+            ).star
+        );
+      
         // unaryExpression templateArguments? arguments
         // | type arguments
         funcCallExpr ~= revSeq(
@@ -305,11 +403,15 @@ DMatcher reverseFuncDeclaration(){
         funcCallExpr ~= revSeq(
             type, revBalanced
         );
+        version(unittest)
+            unaryExpr.checkRevParse(
+
+            );
         
         auto funcDecl = revSeq(
             any(storageClass, type),
             dtok!"identifier",
-            revBalanced,
+            revBalanced.optional,
             revBalanced,
             memberFuncAttr.star,
             constraint.optional
@@ -318,7 +420,7 @@ DMatcher reverseFuncDeclaration(){
     }
 }
 
-void checkRevParse(size_t line = __LINE__)(DMatcher m, string[] dsource...){
+void checkRevParse(bool sucessful=true, size_t line = __LINE__)(DMatcher m, string[] dsource...){
     auto internCache = StringCache(2048);
     auto config = LexerConfig("test.d", StringBehavior.compiler);
     import std.conv;
@@ -327,7 +429,8 @@ void checkRevParse(size_t line = __LINE__)(DMatcher m, string[] dsource...){
         TS ts = getTokensForParser(cast(ubyte[])ds.dup, 
             config, &internCache).dup;
         ts.reverse();
-        assert(ts.matches(m), text("invoked on line ", line, " test #", i));
+        assert(ts.matches(m) ^ !sucessful, 
+            text("invoked on line ", line, " test #", i));
     }
 }
 
@@ -337,4 +440,18 @@ unittest{
     revBalanced.checkRevParse("(a(+b)())");
     // invokes lots of self-checks
     auto revParser = reverseFuncDeclaration();
+    revParser.checkRevParse(
+`void topN(alias less = "a < b", Range)(Range r, size_t nth)
+if (isRandomAccessRange!(Range) && hasLength!Range)`,
+`public bool isKeyword(IdType type) pure nothrow @safe`,
+`EditOp[] path()`,
+`Cycle!R cycle(R)(R input, size_t index = 0)`
+    );
+    revParser.checkRevParse!false(
+`topN(alias less = "a < b", Range)(Range r, size_t nth)
+if (isRandomAccessRange!(Range) && hasLength!Range)`,
+`public bool isKeyword((IdType type) pure nothrow @safe`,
+`public isKeyword(IdType type) pure nothrow @safe`,
+`struct Levenshtein(Range, alias equals, CostType = size_t)`
+    );
 }
