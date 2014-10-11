@@ -7,5 +7,6 @@
     "libdparse": ">=0.1.1"
 	},
   "targetType" : "executable",
+  "mainSourceFile" : "source/gchunt.d",
   "targetName" : "gchunt"
 }

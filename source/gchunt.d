@@ -1,47 +1,21 @@
+//Written in the D programming language
 /**
     gchunt - a tool to post-process -vgc compiler logs into 
     a neat report table with source links.
 
     Current use case - @nogc Phobos.
 */
-//Written in the D programming language
 module gchunt;
 
-import std.conv, std.stdio, std.string, std.exception,
-    std.regex, std.algorithm, std.range, std.process;
+import std.algorithm, std.conv, std.stdio, std.string, std.exception,
+    std.regex, std.range, std.process;
 
 static import std.file;
 
-import matcher;
-
 // libdparse:
 import std.d.lexer;
-
-// Add some matchers
-Matcher!(Token[]) dtok(string id)()
-{
-    return new class Matcher!(Token[]){
-        bool match(ref Token[] ts){
-            if(!ts.empty && ts[0].type == tok!id){
-                ts.popFront();
-                return true;
-            }
-            else
-                return false;
-        }
-    };
-}
-
-Matcher!(Token[]) reverseDeclarationMatcher(){
-    alias factory = matcherFactory!(Token[]);
-    with(factory){
-        auto expr = dtok!"!"; // FIXME!
-        auto constraint = optional(seq(
-            dtok!"if", dtok!"(", expr, dtok!")"
-        ));
-        return constraint;
-    }
-}
+// our pattern matching on D tokens
+import revdpattern;
 
 struct Result{
     string file, line, reason;
