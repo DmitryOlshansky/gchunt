@@ -7,6 +7,9 @@
 
     The focus is on simplicity and flexibilty first,
     with speed being only 3rd on the list of priorities.
+
+    API is heavily influenced by so-called parser combinators,
+    a functional approach to parsing.
 +/
 module matcher;
 
@@ -19,7 +22,12 @@ unittest
     with(factory){        
         auto ab = any(token('a'), token('b'));
         // matcher = k(a|b)*c{3,}
-        auto matcher = seq(token('k'), star(ab), atLeast(3, token('c')));
+        // better with insanely cool UFCS:
+        auto matcher = seq(
+            'k'.token,
+            ab.star, 
+            'c'.token.atLeast(3)
+        );
         string s = "kabaabbbcccc";
         assert(matcher(s));
         assert(s.empty);
@@ -31,15 +39,16 @@ unittest
 }
 
 /// User-defined "token" & user-defined matcher
-version(unittest)
+version(unittest) 
 {
-    // Sadly UFCS is not supported for local functions
-    // see neat usage of UFCS in the unittest block
+    // our "token"
     struct Rec{
         string name;
         int value;
     }
 
+    // pack few useful factory functions into a template
+    // "extending" original matcherFactory 
     // define our own matcher node
     @property auto value(int val){
         // anonymous class, quite handy
@@ -69,6 +78,7 @@ version(unittest)
     }
 }
 
+///
 unittest
 {
     alias factory = matcherFactory!(Rec[]);
@@ -76,6 +86,7 @@ unittest
         Rec("First", 4), Rec("second", 3), Rec("Third", 3),
         Rec("Forth", 3), Rec("Last", 8), Rec("???", 0)
     ];
+
     with(factory){
         auto matcher = seq(
             "First".name, 
@@ -87,6 +98,48 @@ unittest
     }
 }
 
+/// True classics - arithmetic expression (and recursive matcher)
+unittest
+{
+    import std.algorithm;
+    alias factory = matcherFactory!(string);
+    with(factory){
+        // make some terminals with the help of cool D ranges
+        auto id = 
+            iota(cast(dchar)'a', 'z'+1)
+            .chain(iota(cast(dchar)'0', '9'+1))
+            .map!(x => x.token).array.any.atLeast(1);
+        auto op1 = "-+".map!(x=>x.token).array.any;
+        auto op2 = "*/".map!(x=>x.token).array.any;
+        // we need to add an (expr) alternative later
+        // so make prime an alternative with one matcher for now
+        auto prime = seq('-'.token.optional, id).any;
+
+        // easy testing of each individual production!
+        assert("vaz190".matches(prime));
+        assert("-var".matches(prime));
+
+        // Just to show explicit tail-recursion... 
+        // (it's better to simply use star here)
+        auto head = seq(prime, op2);
+        auto term = any(head, prime);
+        // head = Prime [*/]
+        // term = head | Prime
+        // recursion via appending
+        head.append(term);
+        assert("a*c/-e".matches(term));
+
+        // here we pick simpler
+        auto expr = seq(term, seq(op1, term).star);
+        // recursion via self-linking of seq 
+        assert("-var1+var2*c-d".matches(expr));
+
+        // Last piece - add parenthesized expression
+        prime.append(seq('('.token, expr, ')'.token));
+        assert("-var1+var2*(c-d*(a+e))-(c*e-12)".matches(expr));
+    }
+}
+
 /// Generic matcher interface
 interface Matcher(Stream)
     if(isForwardRange!Stream)
@@ -94,7 +147,7 @@ interface Matcher(Stream)
     alias S = Stream;
     alias M = Matcher;
     alias Tk = ElementType!Stream;
-    /// on success advances input, on failure leaves intact
+    /// on success advances the input, on failure leaves everything intact
     final bool opCall(ref S input){
         return match(input);
     }
@@ -102,149 +155,158 @@ interface Matcher(Stream)
     protected bool match(ref S input);
 }
 
-/// A simpliest matcher - just match a single token
-class Fixed(Stream) : Matcher!Stream {
-protected:
-    Tk token;
-    this(Tk token){
-        this.token = token;
-    }
-
-    bool match(ref S s){        
-        if(!s.empty && s.front == token){
-            s.popFront();
-            return true;
-        }
-        else
-            return false;
-    }
+/// Test if range's head fits matcher's pattern
+bool startsWith(R)(R s, Matcher!R m)
+    if(isForwardRange!R)
+{
+    return m(s);
 }
 
-/// Match any from a list of matchers
-class Any(Stream): Matcher!Stream {
-protected:
-    M[] matchers;
-
-    this(M[] matchers)
-    in{
-        assert(matchers.length != 0);
-    }body{
-        this.matchers = matchers;
-    }
-
-    bool match(ref S s){
-        foreach(m; matchers)
-            if(m(s))
-                return true;
-        return false;
-    }
+/// Test if the whole range fits matcher's pattern
+bool matches(R)(R s, Matcher!R m)
+    if(isForwardRange!R)
+{
+    return m(s) && s.length == 0;
 }
 
-/// Match any from a list of matchers
-class Sequence(Stream): Matcher!Stream {
+/// Generic interface for a matcher with multiple  
+/// sub-matchers and ability to add matcher after construction
+interface MultiMatcher(Stream): Matcher!Stream {
 protected:
-    M[] matchers;
+    /++
+        To tweak after construction, in particular for self-referencing
 
-    this(M[] matchers)
-    in{
-        assert(matchers.length != 0);
-    }body{
-        this.matchers = matchers;
-    }
-
-    /// To tweak after construction, in particular for self-referencing
-    void append(M m){
-        matchers ~= m;
-    }
-
-    bool match(ref S s){
-        auto t = s.save;
-        foreach(i, m; matchers)
-            if(!m(s)){
-                // restore state
-                if(i != 0)
-                    s = t;
-                return false;
-            }
-        return true;
-    }
-}
-
-/// klenee star of regex
-class Star(Stream) : Matcher!Stream {
-protected:
-    M expr;
-    this(M m){
-        expr = m;
-    }
-
-    bool match(ref S s){
-        // keep matching while we can
-        while(expr(s)){}
-        // can exit with 0 matches
-        return true;
-    }
-}
-
-/// {n, } of regex
-class AtLeastN(Stream) : Matcher!Stream {
-protected:
-    M expr;
-    uint count;
-
-    this(uint n, M m){
-        expr = m;
-        count = n;
-    }
-
-    bool match(ref S s){
-        auto t = s.save;
-        for(uint n=0; n<count; n++)
-            if(!expr(s)){
-                // restore state
-                if(n != 0)
-                    s = t;
-                return false;
-            }
-        // keep matching
-        while(expr(s)){}
-        return true;
-    }
+        Fluent interface, returns `this` to allow chaining.
+    +/
+    public MultiMatcher append(M m);
 }
 
 /// Factory template - creates matchers for given Range type
 /// and consequently element type.
+/// 
+//// Note it is perfectly fine to mixin this template for convenience.
 template matcherFactory(Stream)
     if(isForwardRange!Stream)
 {
     alias Tk = ElementType!Stream;
     alias M = Matcher!Stream;
+    alias MM = MultiMatcher!Stream;
     alias S = Stream;
     /// Single-token matcher
-    auto token(Tk t){
-        return new Fixed!Stream(t);
+    M token(Tk t){
+        return new class M{
+            bool match(ref S s){        
+                if(!s.empty && s.front == t){
+                    debug(matcher) writeln("Token ", t);
+                    s.popFront();
+                    return true;
+                }
+                else
+                    return false;
+            }
+        };
     }
 
     /// Any of matchers
-    auto any(M[] matchers...){
-        // or we'd pass stack-allocated array
-        return new Any!Stream(matchers.dup);
+    MM any(M[] matchers...)
+    in{
+        assert(matchers.length != 0);
+    }body{
+        return new class MM {
+            bool match(ref S s){
+                foreach(i,m; matchers)
+                    if(m(s)){
+                        return true;
+                    }
+                return false;
+            }
+
+            MM append(M matcher){
+                matchers ~= matcher;
+                return this;
+            }
+        };
     }
 
     /// Sequence
-    auto seq(M[] matchers...){
-        // or we'd pass stack-allocated array
-        return new Sequence!Stream(matchers.dup);
+    MM seq(M[] matchers...)
+    in{
+        assert(matchers.length != 0);
+    }body{
+        return new class MM {
+            bool match(ref S s){
+                auto t = s.save;
+                foreach(i, m; matchers)
+                    if(!m(s)){
+                        // restore state
+                        if(i != 0)
+                            s = t;
+                        return false;
+                    }
+                return true;
+            }
+
+            MM append(M matcher){
+                matchers ~= matcher;
+                return this;
+            }
+        };
     }
 
     /// Any of matchers
-    auto atLeast(uint n, M matcher){
-        return new AtLeastN!Stream(n, matcher);
+    M atLeast(M matcher, uint n){
+        return new class M {
+            bool match(ref S s){
+                auto t = s.save;
+                for(uint i=0; i<n; i++)
+                    if(!matcher(s)){
+                        // restore state
+                        if(i != 0)
+                            s = t;
+                        return false;
+                    }
+                // keep matching
+                while(matcher(s)){}
+                return true;
+            }
+        };
+    }
+
+    /// zero or one match
+    M optional(M matcher){
+        return new class M{
+            bool match(ref S s){
+                matcher(s);
+                return true;
+            }
+        };
     }
 
     /// kleene-start of some expression
-    auto star(M matcher){
-        return new Star!Stream(matcher);
+    M star(M matcher){
+        return new class M {
+            bool match(ref S s){
+                // keep matching while we can
+                while(matcher(s)){}
+                // can exit with 0 matches
+                return true;
+            }
+        };
+    }
+
+    static if(isRandomAccessRange!Stream && hasSlicing!Stream)
+    M captureTo(M matcher, ref Stream target)
+    {
+        return new class M {
+            bool match(ref S s){
+                auto t = s.save;
+                if(matcher(s)){
+                    target = t[0 .. t.length - s.length];
+                    return true;
+                }
+                else
+                    return false;
+            }
+        };
     }
 }
-
