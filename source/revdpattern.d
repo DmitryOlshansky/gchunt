@@ -86,7 +86,7 @@ DFunc:
 
 But in reverse!
 +/
-DMatcher reverseFuncDeclaration(){
+DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
     with(factory){
         auto funcCallExpr = any();  // for referencing, will fill in later
         auto type = seq(); // ditto
@@ -405,12 +405,13 @@ DMatcher reverseFuncDeclaration(){
         );
         version(unittest)
             unaryExpr.checkRevParse(
-
             );
-        
+        auto functionId = dtok!"identifier";
+        if(idSink != null)
+            functionId = functionId.captureTo(idSink);
         auto funcDecl = revSeq(
             any(storageClass, type),
-            dtok!"identifier",
+            functionId,
             revBalanced.optional,
             revBalanced,
             memberFuncAttr.star,
@@ -438,8 +439,12 @@ unittest{
     with(factory)
         seq(dtok!")", dtok!"(").checkRevParse("()");
     revBalanced.checkRevParse("(a(+b)())");
-    // invokes lots of self-checks
-    auto revParser = reverseFuncDeclaration();
+    string[] ids;
+    // also invokes lots of self-checks
+    auto revParser = reverseFuncDeclaration((Token[] slice){
+        assert(slice[0].type == tok!"identifier");
+        ids ~= slice[0].text.dup;
+    });
     revParser.checkRevParse(
 `void topN(alias less = "a < b", Range)(Range r, size_t nth)
 if (isRandomAccessRange!(Range) && hasLength!Range)`,
@@ -447,6 +452,7 @@ if (isRandomAccessRange!(Range) && hasLength!Range)`,
 `EditOp[] path()`,
 `Cycle!R cycle(R)(R input, size_t index = 0)`
     );
+    assert(ids == ["topN", "isKeyword", "path", "cycle"]);
     revParser.checkRevParse!false(
 `topN(alias less = "a < b", Range)(Range r, size_t nth)
 if (isRandomAccessRange!(Range) && hasLength!Range)`,
@@ -454,4 +460,7 @@ if (isRandomAccessRange!(Range) && hasLength!Range)`,
 `public isKeyword(IdType type) pure nothrow @safe`,
 `struct Levenshtein(Range, alias equals, CostType = size_t)`
     );
+    // id's reached before failure are also added
+    assert(ids == ["topN", "isKeyword", "path", "cycle", 
+        "topN", "isKeyword", "Levenshtein"]);
 }

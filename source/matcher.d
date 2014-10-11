@@ -341,7 +341,7 @@ template matcherFactory(Stream)
             bool match(ref S s){
                 auto t = s.save;
                 if(matcher(s)){
-                    put(t[0 .. t.length - s.length], sink);
+                    put(sink, t[0 .. t.length - s.length]);
                     return true;
                 }
                 else
