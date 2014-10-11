@@ -1,3 +1,4 @@
+//Written in the D programming language
 /++
     Generic recursive descent parser / pattern matcher.
     
@@ -14,6 +15,7 @@
 module matcher;
 
 import std.range;
+debug(matcher) import std.stdio;
 
 /// Simple regex on strings
 unittest
@@ -126,7 +128,7 @@ unittest
         // head = Prime [*/]
         // term = head | Prime
         // recursion via appending
-        head.append(term);
+        head ~= term;
         assert("a*c/-e".matches(term));
 
         // here we pick simpler
@@ -135,7 +137,7 @@ unittest
         assert("-var1+var2*c-d".matches(expr));
 
         // Last piece - add parenthesized expression
-        prime.append(seq('('.token, expr, ')'.token));
+        prime ~= seq('('.token, expr, ')'.token);
         assert("-var1+var2*(c-d*(a+e))-(c*e-12)".matches(expr));
     }
 }
@@ -169,16 +171,50 @@ bool matches(R)(R s, Matcher!R m)
     return m(s) && s.length == 0;
 }
 
-/// Generic interface for a matcher with multiple  
-/// sub-matchers and ability to add matcher after construction
-interface MultiMatcher(Stream): Matcher!Stream {
-protected:
-    /++
-        To tweak after construction, in particular for self-referencing
+/++
+    Abstract generic matcher with multiple  
+    sub-matchers and ability to manipulate them after construction.
 
-        Fluent interface, returns `this` to allow chaining.
-    +/
-    public MultiMatcher append(M m);
+    In particular this allows for self-referencing.
++/
+abstract class MultiMatcher(Stream): Matcher!Stream {
+    protected M[] matchers;
+    protected this(M[] elements){
+        matchers = elements;
+    }
+    /// Array-like set of primitives.
+    public final M opIndex(size_t idx){
+        return matchers[idx];
+    }
+
+    ///ditto
+    public final M[] opSlice(){
+        return matchers[0..$];
+    }
+    ///ditto
+    public final M[] opSlice(size_t s, size_t e){
+        return matchers[s..e];
+    }
+
+    ///ditto
+    public final @property size_t length() {
+        return matchers.length;
+    }
+
+    ///ditto
+    public final MultiMatcher insert(size_t start, M[] elems...){
+        import std.array;
+        insertInPlace(matchers, start, elems);
+        return this;
+    }
+
+    ///ditto
+    public final MultiMatcher opOpAssign(string op)(M m)
+        if(op == "~")
+    {
+        matchers ~= m;
+        return this;
+    }
 }
 
 /// Factory template - creates matchers for given Range type
@@ -207,12 +243,26 @@ template matcherFactory(Stream)
         };
     }
 
+    M dot()
+    {
+        //TODO: could reuse one instance
+        return new class M{
+            bool match(ref Stream s){
+                if(s.empty)
+                    return false;
+                else{
+                    s.popFront();
+                    return true;
+                }
+            }
+        };
+    }
+
     /// Any of matchers
-    MM any(M[] matchers...)
-    in{
-        assert(matchers.length != 0);
-    }body{
+    MM any(M[] mms...){
         return new class MM {
+            this(){ super(mms.dup); }
+
             bool match(ref S s){
                 foreach(i,m; matchers)
                     if(m(s)){
@@ -220,20 +270,14 @@ template matcherFactory(Stream)
                     }
                 return false;
             }
-
-            MM append(M matcher){
-                matchers ~= matcher;
-                return this;
-            }
         };
     }
 
     /// Sequence
-    MM seq(M[] matchers...)
-    in{
-        assert(matchers.length != 0);
-    }body{
+    MM seq(M[] mms...){
         return new class MM {
+            this(){ super(mms.dup); }
+
             bool match(ref S s){
                 auto t = s.save;
                 foreach(i, m; matchers)
@@ -244,11 +288,6 @@ template matcherFactory(Stream)
                         return false;
                     }
                 return true;
-            }
-
-            MM append(M matcher){
-                matchers ~= matcher;
-                return this;
             }
         };
     }
@@ -295,13 +334,14 @@ template matcherFactory(Stream)
     }
 
     static if(isRandomAccessRange!Stream && hasSlicing!Stream)
-    M captureTo(M matcher, ref Stream target)
+    M captureTo(Sink)(M matcher, Sink sink)
+        if(isOutputRange!(Sink, Stream))
     {
         return new class M {
             bool match(ref S s){
                 auto t = s.save;
                 if(matcher(s)){
-                    target = t[0 .. t.length - s.length];
+                    put(t[0 .. t.length - s.length], sink);
                     return true;
                 }
                 else
