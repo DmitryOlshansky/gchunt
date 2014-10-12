@@ -80,7 +80,7 @@ string findAtrifact(ref Result r){
     // get id
     string id = locateFunction(upper_half);
     if(id is null)
-        return "this"; // wild guess
+        return "****"; // no idea...
     //now, from this point continue to search for aggregate if any
     string agg = locateAggregate(upper_half);
     if(agg !is null)
@@ -128,6 +128,7 @@ struct Artifact{
     int[] locs;
     string id;
     string mod;
+    string[] reasons;
 }
 
 Artifact[string] artifacts;
@@ -163,10 +164,14 @@ else void main(){
         auto artifact = findAtrifact(r);
         if(!artifact.endsWith("unittest")){
             auto path = mod~":"~artifact;
-            if(path in artifacts)
+            if(path in artifacts){
                 artifacts[path].locs ~= to!int(r.line);
-            else
+            }
+            else{
                 artifacts[path] = Artifact([to!int(r.line)], artifact, mod);
+            }
+            if(!artifacts[path].reasons.canFind(r.reason))
+                artifacts[path].reasons ~= r.reason;
         }
     }
     auto accum = artifacts.values();
@@ -183,11 +188,13 @@ else void main(){
 |-`);
     stderr.writeln("Total number of GC-happy functions: ", accum.length);
     foreach(art; accum){
+        art.reasons.sort();
+        string reason = art.reasons.join(";\n");
         string links;
         foreach(i, loc; art.locs)
             links ~= format(linkTemplate, gitHost, gitRepo, gitHash, 
                 art.mod.replace(".","/"), loc, i+1);
-        writef("|%s\n|%s\n|%s\n| ???\n|-\n", art.mod, art.id, links);
+        writef("|%s\n|%s\n|%s\n| ???\n|-\n", art.mod, art.id, reason~"  "~links);
     }
     writeln("|}");
 }
