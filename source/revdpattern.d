@@ -296,6 +296,13 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
          | StringLiteral+
          | CharacterLiteral
         +/
+        auto block = revBalanced(dtok!"{", dtok!"}");
+        auto funcContract = any(
+            revSeq(dtok!"in", block.optional, dtok!"body"),
+            revSeq(dtok!"out", revBalanced.optional, block.optional, dtok!"body"),
+            revSeq(dtok!"in", block.optional, dtok!"out", revBalanced.optional, 
+                block.optional, dtok!"body"),
+        );
         auto primeExpr = any(
             dtok!"intLiteral", dtok!"characterLiteral",
             dtok!"stringLiteral", dtok!"floatLiteral",
@@ -318,8 +325,9 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             revSeq(
                 revSeq(any(dtok!"function", dtok!"delegate"), type.optional).optional,
                 revSeq(revBalanced, functionAttribute.star).optional,
-                //TODO: in/out/body 
-                revBalanced(dtok!"{", dtok!"}")
+                //in/out/body 
+                funcContract.optional,
+                block
             ),
             // array & AA literals
             revBalanced(dtok!"[", dtok!"]"),
@@ -407,17 +415,30 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             unaryExpr.checkRevParse(
             );
         auto functionId = dtok!"identifier";
-        if(idSink != null)
+        auto constructorId = dtok!"this";
+        if(idSink != null){
             functionId = functionId.captureTo(idSink);
+            constructorId = constructorId.captureTo(idSink);
+        }
+
+        auto constructoDecl = revSeq(
+            constructorId,
+            revBalanced.optional,
+            revBalanced,
+            memberFuncAttr.star,
+            constraint.optional 
+        );
+
         auto funcDecl = revSeq(
             any(storageClass, type),
             functionId,
             revBalanced.optional,
             revBalanced,
             memberFuncAttr.star,
-            constraint.optional
+            constraint.optional,
+            funcContract.optional
         );
-        return funcDecl;
+        return any(funcDecl, constructoDecl);
     }
 }
 
@@ -488,7 +509,7 @@ unittest{
     string[] ids;
     auto sink = (Token[] slice){
         assert(slice.length == 1);
-        ids ~= slice[0].text.dup;
+        ids ~= slice[0].text.length ? slice[0].text.idup : str(slice[0].type).idup;
     };
     // also invokes lots of self-checks
     auto revParser = reverseFuncDeclaration(sink);
@@ -497,9 +518,15 @@ unittest{
 if (isRandomAccessRange!(Range) && hasLength!Range)`,
 `public bool isKeyword(IdType type) pure nothrow @safe`,
 `EditOp[] path()`,
-`Cycle!R cycle(R)(R input, size_t index = 0)`
+`Cycle!R cycle(R)(R input, size_t index = 0)`,
+`ForeachType!Range[] array(Range)(Range r)
+if (isIterable!Range && !isNarrowString!Range && !isInfinite!Range)`,
+`receiveOnlyRet!(T) receiveOnly(T...)() in{ assert(); }body`,
+`void toString(scope void delegate(const(char)[]) sink, ref FormatSpec!char f) const`,
+`this()`
     );
-    assert(ids == ["topN", "isKeyword", "path", "cycle"]);
+    assert(ids == ["topN", "isKeyword", "path", "cycle", "array", "receiveOnly",
+        "toString", "this"]);
     revParser.checkRevParse!false(
 `topN(alias less = "a < b", Range)(Range r, size_t nth)
 if (isRandomAccessRange!(Range) && hasLength!Range)`,
@@ -508,8 +535,8 @@ if (isRandomAccessRange!(Range) && hasLength!Range)`,
 `struct Levenshtein(Range, alias equals, CostType = size_t)`
     );
     // id's reached before failure are also added
-    assert(ids == ["topN", "isKeyword", "path", "cycle", 
-        "topN", "isKeyword", "Levenshtein"]);
+    assert(ids == ["topN", "isKeyword", "path", "cycle", "array", "receiveOnly",
+        "toString", "this", "topN", "isKeyword", "Levenshtein"]);
     ids = [];
     auto parseAgg = reverseAggregateDeclaration(sink);
     parseAgg.checkRevParse(

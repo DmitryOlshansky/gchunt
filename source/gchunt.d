@@ -51,7 +51,10 @@ bool locateMatching(ref Token[] stream, DMatcher matcher){
 string locateFunction(ref Token[] tokens){
     string id;
     auto matcher = reverseFuncDeclaration((Token[] ts){
-        id = ts[0].text.dup;
+        if (ts[0].type == tok!"this")
+            id = "this";
+        else
+            id = ts[0].text.dup;
     });
     if(locateMatching(tokens, matcher))
         return id;
@@ -69,8 +72,21 @@ string locateAggregate(ref Token[] tokens){
     else
         return null;
 }
+/*
+bool blockContains(Token[] blockStart, Token[] position)
+{
+    auto below = find!(x => x.type == tok!"{")(blockStart);
+    int balance = 1;
+    while(balance > 0 && !below.empty){
+        if(below.front.type == tok!"}")
+            balance--;
+        else if(below.front.type == tok!"{")
+            balance++;
+        below.popFront();
+    }
+}*/
 
-string findAtrifact(ref Result r){
+string findArtifact(ref Result r){
     auto tokens = tokenStreams[r.file];
     size_t start = to!size_t(r.line)-1;
     //BUG: libdparse only takes mutable bytes and returns const tokens?!! WAT, seriously
@@ -140,7 +156,6 @@ else void main(){
     string gitHash = gitHEAD();
     string gitRepo = gitRemotePath();
     auto re = regex(`(.*[\\/]\w+)\.d\((\d+)\):\s*vgc:\s*(.*)`);
-    //writeln(`std\variant.d(236): vgc: 'new' causes GC allocation`.match(re));
     Result[] results;
     foreach(line; stdin.byLine){
         auto m = line.idup.matchFirst(re);
@@ -161,7 +176,7 @@ else void main(){
     foreach(r; results){
         //writeln(r.file, ",", r.line, ",", r.reason);
         auto mod = r.file.replace("/", ".");
-        auto artifact = findAtrifact(r);
+        auto artifact = findArtifact(r);
         if(!artifact.endsWith("unittest")){
             auto path = mod~":"~artifact;
             if(path in artifacts){
