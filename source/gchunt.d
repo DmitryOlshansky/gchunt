@@ -91,7 +91,7 @@ string findArtifact(ref Result r){
     size_t start = to!size_t(r.line)-1;
     //BUG: libdparse only takes mutable bytes and returns const tokens?!! WAT, seriously
     auto tk_current = find!(t => t.line == start + 1)(tokens);
-    auto upper_half = tokens[0 .. $ - tk_current.length];
+    auto upper_half = tokens[0 .. $ - tk_current.length].dup;
     upper_half.reverse(); // look at it backwards
     // get id
     string id = locateFunction(upper_half);
