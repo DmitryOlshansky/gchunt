@@ -123,6 +123,15 @@ string gitRemotePath(){
 
 Token[][string] tokenStreams;
 
+// identified source-code entity
+struct Artifact{
+    int[] locs;
+    string id;
+    string mod;
+}
+
+Artifact[string] artifacts;
+
 version(unittest) void main(){}
 else void main(){
     string fmt = "mediawiki";
@@ -148,9 +157,23 @@ else void main(){
         auto data = cast(ubyte[])std.file.read(mod ~ ".d");
         tokenStreams[mod] = getTokensForParser(data, config, &interned).dup;
     }
+    foreach(r; results){
+        //writeln(r.file, ",", r.line, ",", r.reason);
+        auto mod = r.file.replace("/", ".");
+        auto artifact = findAtrifact(r);
+        if(!artifact.endsWith("unittest")){
+            auto path = mod~":"~artifact;
+            if(path in artifacts)
+                artifacts[path].locs ~= to!int(r.line);
+            else
+                artifacts[path] = Artifact([to!int(r.line)], artifact, mod);
+        }
+    }
+    auto accum = artifacts.values();
+    accum.sort!((a,b) => a.mod < b.mod || (a.mod == b.mod && a.id < b.id));
 
     string linkTemplate =
-`[%s/%s/blob/%s/%s.d#L%s %s]`;
+`[%s/%s/blob/%s/%s.d#L%s %d] `;
     writeln(`
 {| class="wikitable"
 ! Module
@@ -158,14 +181,13 @@ else void main(){
 ! Reason
 ! Possible Fix(es)
 |-`);
-    foreach(r; results){
-        //writeln(r.file, ",", r.line, ",", r.reason);
-        auto mod = r.file.replace("/", ".");
-        auto artifact = findAtrifact(r);
-        if(!artifact.endsWith("unittest")){
-            auto link = format(linkTemplate, gitHost, gitRepo, gitHash, r.file, r.line, mod);
-            writef("|%s\n|%s\n|%s\n| ???\n|-\n", link, artifact, r.reason);
-        }
+    stderr.writeln("Total number of GC-happy functions: ", accum.length);
+    foreach(art; accum){
+        string links;
+        foreach(i, loc; art.locs)
+            links ~= format(linkTemplate, gitHost, gitRepo, gitHash, 
+                art.mod.replace(".","/"), loc, i+1);
+        writef("|%s\n|%s\n|%s\n| ???\n|-\n", art.mod, art.id, links);
     }
     writeln("|}");
 }
