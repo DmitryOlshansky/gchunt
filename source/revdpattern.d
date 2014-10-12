@@ -442,7 +442,7 @@ unittest{
     string[] ids;
     // also invokes lots of self-checks
     auto revParser = reverseFuncDeclaration((Token[] slice){
-        assert(slice[0].type == tok!"identifier");
+        assert(slice.length == 1);
         ids ~= slice[0].text.dup;
     });
     revParser.checkRevParse(

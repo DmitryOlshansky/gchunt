@@ -21,90 +21,47 @@ struct Result{
     string file, line, reason;
 }
 
-bool onlyKeywords(string line)
-{
-    return line.matchFirst(`^\s*(?:(?:@(?:trusted|safe)|final|pure|abstract|private|public|package|struct|class|template|nothrow)\s*)+$`)
-        .length != 0;
-}
-
-size_t walkUp(string[] lines, int indent, size_t current)
-{
-// exploits Phobos style guide
-// HACKISH :)
-    string re = `^(    |\t){`~to!string(indent)~`}`;
-   while(lines[current].matchFirst(re)
-|| lines[current].matchFirst(`^\s*(?://|/\*|\*/|/\+|\+/)`) // comments
-|| lines[current].matchFirst(`^\s*\w+:`) // label
-|| lines[current].matchFirst(`^\s*(private|public):?\s*$`) // block scope
-|| lines[current].onlyKeywords
-|| lines[current].matchFirst(`^\s*(?:in|out|body|if|else|version)`) // if-constraint or (else)version ?
-|| lines[current].matchFirst(`^\s*(?:\{|\})`) // brace on its line
-|| !lines[current].length){  // empty line
-        current--;
-        if(current == 0) // can't find
-            break;
-    }
-    return current;
-}
-
-
-string findAtrifact(ref Result r)
-{
+string findAtrifact(ref Result r){
     auto data = cast(ubyte[])std.file.read(r.file ~ ".d");
-    auto lines = (cast(string)data).split("\n");
     size_t start = to!size_t(r.line)-1;
-    // while indented at least once - step up!
-    size_t current = walkUp(lines, 1, start);
-    //now we are at top-most decl
-
-    // all above the current line
-    string upper_half = join(lines[current..start]);
-    string parent = "";
     auto interned = StringCache(2048);
     auto config = LexerConfig(r.file~".d", StringBehavior.compiler);
-
-    //BUG: libdparse only takes mutable bytes ?!! WAT, seriously
-    auto tokens = getTokensForParser(data,
-        config, &interned);
-    auto tk_upper = find!(t => t.line == current + 1)(tokens);
+    //BUG: libdparse only takes mutable bytes and returns const tokens?!! WAT, seriously
+    auto tokens = getTokensForParser(data, config, &interned).dup;
     auto tk_current = find!(t => t.line == start + 1)(tokens);
-    assert(tk_upper.length > tk_current.length);
-    auto len = tk_upper.length - tk_current.length;
-    auto head = tk_upper[0..len];
-    size_t balance = count(head.map!(x=>x.type), tok!"{") 
-    - count(head.map!(x=>x.type), tok!"}");
-    auto fullLen = len + 1 + countUntil!((x){
-        if(x.type == tok!"{")
-            balance++;
-        else if(x.type == tok!"}")
+    auto upper_half = tokens[0 .. $ - tk_current.length];
+    upper_half.reverse(); // look at it backwards
+    string id;
+    // take reverse pattern-matcher
+    auto matcher = reverseFuncDeclaration((Token[] ts){
+        id = ts[0].text.dup;
+    });
+    int balance = 0; // dec on '}', inc on '{'
+    for(;;){
+        if(upper_half.empty)
+            break;
+        if(upper_half.front.type == tok!"}"){
+            upper_half.popFront();
             balance--;
-        return balance == 0;
-    })(tk_current);
-    stderr.writeln(tk_upper[0..fullLen].map!(x => str(x.type)));
-    //r.line = to!string(current+1); // line number
-    /*auto sig = lines[current].matchFirst(
-`^\s*(?:(?:private|public|package|static|final|@(?:property|safe|trusted|nogc|system)|template)\s*)*(\S+)(?:\s+(\w+))?`);
-    if(!sig){
-        stderr.writefln("%s.d(%s):***\t%s", r.file, r.line, lines[current]);
-        return "****";
-    }
-    else{
-        stderr.writeln(sig);
-        string signature = sig[2].length ? sig[2] : sig[1];
-        if(!signature.matchFirst(`^[\w()]+$`)){
-            stderr.writefln("%s.d(%s):??? %s", r.file, r.line, lines[current]);
-            return "****";
         }
-        if(parent.length)
-            signature = parent ~ "." ~ signature;
-
-        return signature;
-    }*/
-    return "***";
+        else if(upper_half.front.type == tok!"{"){
+            upper_half.popFront();
+            balance++;
+            if(balance > 0){
+                if(matcher(upper_half))
+                    return id;
+            }
+            balance = 0; // failed to match, again we must skip balanced pairs
+        }
+        else
+            upper_half.popFront(); // next token
+    }
+    //HaCK: wild guess untill we parse constructors as well.
+    // It does turn out to be true more often then not.
+    return "this";
 }
 
-string gitHEAD()
-{
+string gitHEAD(){
     auto ret = execute(["git", "log"]);
     enforce(ret.status == 0);
     auto m = ret.output.matchFirst(`commit\s*([a-fA-F0-9]+)`);
@@ -112,8 +69,7 @@ string gitHEAD()
     return m[1];
 }
 
-string gitRemotePath()
-{
+string gitRemotePath(){
     auto ret = execute(["git", "remote", "-v"]);
     enforce(ret.status == 0);
     auto m = ret.output.matchFirst(`origin\s*(.+) \(fetch\)`);
@@ -124,10 +80,8 @@ string gitRemotePath()
     return m[1]~"/"~m[2];
 }
 
-version(unittest)
-    void main(){}
-else
-void main(){
+version(unittest) void main(){}
+else void main(){
     string fmt = "mediawiki";
     string gitHost = `https://github.com`;
     string gitHash = gitHEAD();
