@@ -21,44 +21,85 @@ struct Result{
     string file, line, reason;
 }
 
-string findAtrifact(ref Result r){
-    auto data = cast(ubyte[])std.file.read(r.file ~ ".d");
-    size_t start = to!size_t(r.line)-1;
-    auto interned = StringCache(2048);
-    auto config = LexerConfig(r.file~".d", StringBehavior.compiler);
-    //BUG: libdparse only takes mutable bytes and returns const tokens?!! WAT, seriously
-    auto tokens = getTokensForParser(data, config, &interned).dup;
-    auto tk_current = find!(t => t.line == start + 1)(tokens);
-    auto upper_half = tokens[0 .. $ - tk_current.length];
-    upper_half.reverse(); // look at it backwards
-    string id;
-    // take reverse pattern-matcher
-    auto matcher = reverseFuncDeclaration((Token[] ts){
-        id = ts[0].text.dup;
-    });
+// also advances token stream
+bool locateMatching(ref Token[] stream, DMatcher matcher){
     int balance = 0; // dec on '}', inc on '{'
     for(;;){
-        if(upper_half.empty)
+        //HaCK: wild guess untill we parse constructors as well.
+        // It does turn out to be true more often then not.
+        if(stream.empty)
             break;
-        if(upper_half.front.type == tok!"}"){
-            upper_half.popFront();
+        if(stream.front.type == tok!"}"){
+            stream.popFront();
             balance--;
         }
-        else if(upper_half.front.type == tok!"{"){
-            upper_half.popFront();
+        else if(stream.front.type == tok!"{"){
+            stream.popFront();
             balance++;
             if(balance > 0){
-                if(matcher(upper_half))
-                    return id;
+                if(matcher(stream))
+                    return true;
             }
             balance = 0; // failed to match, again we must skip balanced pairs
         }
         else
-            upper_half.popFront(); // next token
+            stream.popFront(); // next token
     }
-    //HaCK: wild guess untill we parse constructors as well.
-    // It does turn out to be true more often then not.
-    return "this";
+    return false;
+}
+
+string locateFunction(ref Token[] tokens){
+    string id;
+    auto matcher = reverseFuncDeclaration((Token[] ts){
+        id = ts[0].text.dup;
+    });
+    if(locateMatching(tokens, matcher))
+        return id;
+    else
+        return null;
+}
+
+string locateAggregate(ref Token[] tokens){
+    string id;
+    auto matcher = reverseAggregateDeclaration((Token[] ts){
+        id = ts[0].text.dup;
+    });
+    if(locateMatching(tokens, matcher))
+        return id;
+    else
+        return null;
+}
+
+string findAtrifact(ref Result r){
+    auto tokens = tokenStreams[r.file];
+    size_t start = to!size_t(r.line)-1;
+    //BUG: libdparse only takes mutable bytes and returns const tokens?!! WAT, seriously
+    auto tk_current = find!(t => t.line == start + 1)(tokens);
+    auto upper_half = tokens[0 .. $ - tk_current.length];
+    upper_half.reverse(); // look at it backwards
+    // get id
+    string id = locateFunction(upper_half);
+    if(id is null)
+        return "this"; // wild guess
+    //now, from this point continue to search for aggregate if any
+    string agg = locateAggregate(upper_half);
+    if(agg !is null)
+    {
+        // test if aggregate contains original location
+        auto below = find!(x => x.type == tok!"{")(tokens[upper_half.length .. $]);
+        int balance = 1;
+        while(balance > 0 && !below.empty){
+            if(below.front.type == tok!"}")
+                balance--;
+            else if(below.front.type == tok!"{")
+                balance++;
+            below.popFront();
+        }
+        // ends lower then initial position - must be within
+        if(below.length < tk_current.length)
+            id = agg~"."~id;
+    }
+    return id;
 }
 
 string gitHEAD(){
@@ -80,6 +121,8 @@ string gitRemotePath(){
     return m[1]~"/"~m[2];
 }
 
+Token[][string] tokenStreams;
+
 version(unittest) void main(){}
 else void main(){
     string fmt = "mediawiki";
@@ -97,7 +140,14 @@ else void main(){
     }
     sort!((a,b) => a.file < b.file || (a.file == b.file && a.line < b.line))
         (results);
+
     results = uniq(results).array;
+    auto interned = StringCache(4096);
+    foreach(mod;results.map!(x => x.file).uniq){
+        auto config = LexerConfig(mod~".d", StringBehavior.compiler);
+        auto data = cast(ubyte[])std.file.read(mod ~ ".d");
+        tokenStreams[mod] = getTokensForParser(data, config, &interned).dup;
+    }
 
     string linkTemplate =
 `[%s/%s/blob/%s/%s.d#L%s %s]`;
