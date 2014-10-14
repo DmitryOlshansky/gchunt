@@ -145,12 +145,21 @@ string gitRemotePath(){
 
 Token[][string] tokenStreams;
 
+struct Comment{
+    string mod;
+    int loc;
+    string comment;
+}
+
+Comment[] talk; // comments
+
 // identified source-code entity
 struct Artifact{
     int[] locs;
     string id;
     string mod;
     string[] reasons;
+    string comment;
 }
 
 Artifact[string] artifacts;
@@ -179,6 +188,19 @@ else void main(){
         auto data = cast(ubyte[])std.file.read(mod ~ ".d");
         tokenStreams[mod] = getTokensForParser(data, config, &interned).dup;
     }
+    try{
+        auto f = File("talk.gchunt");
+        stderr.writeln("Found talk.gchunt ...");
+        foreach(line; f.byLine) {
+            stderr.writeln(line);
+            auto m = line.matchFirst(`^([^:]+):([^:]+):(.*)`);
+            if(m){
+                talk ~= Comment(m[1].idup, m[2].to!int, m[3].idup);
+            }
+        }
+        stderr.writefln("talk.gchunt loaded: %d comments.", talk.length);
+    }
+    catch(Exception){} // was that FileException?
     foreach(r; results){
         //writeln(r.file, ",", r.line, ",", r.reason);
         auto mod = r.file.replace("/", ".");
@@ -208,6 +230,15 @@ else void main(){
 ! Possible Fix(es)
 |-`);
     stderr.writeln("Total number of GC-happy functions: ", accum.length);
+    foreach(ref art; accum){
+        string[] comments;
+        foreach(i, t; talk)
+            if(t.mod == art.mod && art.locs.canFind(t.loc)){
+                comments ~= t.comment;
+                stderr.writeln("*Attached comment!");
+            }
+        art.comment = comments.sort().uniq().join(";");
+    }
     foreach(art; accum){
         art.reasons.sort();
         string reason = art.reasons.join(";\n");
@@ -215,7 +246,8 @@ else void main(){
         foreach(i, loc; art.locs)
             links ~= format(linkTemplate, gitHost, gitRepo, gitHash, 
                 art.mod.replace(".","/"), loc, i+1);
-        writef("|%s\n|%s\n|%s\n| ???\n|-\n", art.mod, art.id, reason~"  "~links);
+        writef("|%s\n|%s\n|%s\n| %s\n|-\n", art.mod, art.id, 
+            reason~"  "~links, art.comment);
     }
     writeln("|}");
 }
