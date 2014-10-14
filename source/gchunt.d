@@ -187,12 +187,12 @@ else void main(){
         auto config = LexerConfig(mod~".d", StringBehavior.compiler);
         auto data = cast(ubyte[])std.file.read(mod ~ ".d");
         tokenStreams[mod] = getTokensForParser(data, config, &interned).dup;
+        //TODO: generate new "vgc" records for each .(i)dup
     }
     try{
         auto f = File("talk.gchunt");
         stderr.writeln("Found talk.gchunt ...");
         foreach(line; f.byLine) {
-            stderr.writeln(line);
             auto m = line.matchFirst(`^([^:]+):([^:]+):(.*)`);
             if(m){
                 talk ~= Comment(m[1].idup, m[2].to!int, m[3].idup);
@@ -205,17 +205,15 @@ else void main(){
         //writeln(r.file, ",", r.line, ",", r.reason);
         auto mod = r.file.replace("/", ".");
         auto artifact = findArtifact(r);
-        if(!artifact.endsWith("unittest")){
-            auto path = mod~":"~artifact;
-            if(path in artifacts){
-                artifacts[path].locs ~= to!int(r.line);
-            }
-            else{
-                artifacts[path] = Artifact([to!int(r.line)], artifact, mod);
-            }
-            if(!artifacts[path].reasons.canFind(r.reason))
-                artifacts[path].reasons ~= r.reason;
+        auto path = mod~":"~artifact;
+        if(path in artifacts){
+            artifacts[path].locs ~= to!int(r.line);
         }
+        else{
+            artifacts[path] = Artifact([to!int(r.line)], artifact, mod);
+        }
+        if(!artifacts[path].reasons.canFind(r.reason))
+            artifacts[path].reasons ~= r.reason;
     }
     auto accum = artifacts.values();
     accum.sort!((a,b) => a.mod < b.mod || (a.mod == b.mod && a.id < b.id));
@@ -230,15 +228,20 @@ else void main(){
 ! Possible Fix(es)
 |-`);
     stderr.writeln("Total number of GC-happy functions: ", accum.length);
+    int attached = 0;
     foreach(ref art; accum){
         string[] comments;
         foreach(i, t; talk)
             if(t.mod == art.mod && art.locs.canFind(t.loc)){
-                comments ~= t.comment;
-                stderr.writeln("*Attached comment!");
+                comments ~= t.comment;                
             }
-        art.comment = comments.sort().uniq().join(";");
+        if(comments.length){
+            attached += comments.length;
+            art.comment = comments.sort().uniq().join(";");
+        }
     }
+    if(talk.length) //  talk.gchunt file was loaded
+        stderr.writefln("Successfully attached %d comments", attached);
     foreach(art; accum){
         art.reasons.sort();
         string reason = art.reasons.join(";\n");
