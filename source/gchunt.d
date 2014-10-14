@@ -25,8 +25,6 @@ struct Result{
 bool locateMatching(ref Token[] stream, DMatcher matcher){
     int balance = 0; // dec on '}', inc on '{'
     for(;;){
-        //HaCK: wild guess untill we parse constructors as well.
-        // It does turn out to be true more often then not.
         if(stream.empty)
             break;
         if(stream.front.type == tok!"}"){
@@ -64,13 +62,17 @@ string locateFunction(ref Token[] tokens){
 
 string locateAggregate(ref Token[] tokens){
     string id;
-    auto matcher = reverseAggregateDeclaration((Token[] ts){
+    enum dg = (Token[] ts){
         id = ts[0].text.dup;
-    });
-    if(locateMatching(tokens, matcher))
-        return id;
-    else
-        return null;
+    };
+    with(factory){
+        auto matcher = any(reverseAggregateDeclaration(dg), 
+            reverseFuncDeclaration(dg));
+        if(locateMatching(tokens, matcher))
+            return id;
+        else
+            return null;
+    }
 }
 /*
 bool blockContains(Token[] blockStart, Token[] position)
@@ -97,13 +99,17 @@ string findArtifact(ref Result r){
     string id = locateFunction(upper_half);
     if(id is null)
         return "****"; // no idea...
-    //now, from this point continue to search for aggregate if any
-    string agg = locateAggregate(upper_half);
-    if(agg !is null)
+    //now, from this point continue to search for aggregates if any
+    string agg ;
+    for(;;)
     {
+        agg = locateAggregate(upper_half);
+        if(agg is null)
+            break;
         // test if aggregate contains original location
         auto below = find!(x => x.type == tok!"{")(tokens[upper_half.length .. $]);
         int balance = 1;
+        below.popFront();
         while(balance > 0 && !below.empty){
             if(below.front.type == tok!"}")
                 balance--;
