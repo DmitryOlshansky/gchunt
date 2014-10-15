@@ -8,11 +8,12 @@ gchunt is a tool is to help D developers identify and keep in check usage of GC 
 gchunt transforms a stream of GC usage warnings of a D compiler to a nice wiki table. This relies on 2.066 D frontend feature to print [GC allocation points](http://dlang.org/changelog.html#vgc-switch).
 
 For a given project build log, a wiki-table is generated, with columns containing:
-    * module name
-    * artifact name (as in `someClass.someMethod.innerFunction`)
-    * set of source-links to the exact lines of that specific revision
-    * reasons for GC allocation
-    * a place for user comments (solutions)
+
+- module name
+- artifact name (as in `someClass.someMethod.innerFunction`)
+- set of source-links to the exact lines of that specific revision
+- reasons for GC allocation
+- a place for user comments (solutions)
 
 Currently source-links are generated to github source browser, but it's readily hackable to support any other code hosting.
 
