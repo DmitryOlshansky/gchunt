@@ -77,19 +77,6 @@ string locateAggregate(ref Token[] tokens){
             return null;
     }
 }
-/*
-bool blockContains(Token[] blockStart, Token[] position)
-{
-    auto below = find!(x => x.type == tok!"{")(blockStart);
-    int balance = 1;
-    while(balance > 0 && !below.empty){
-        if(below.front.type == tok!"}")
-            balance--;
-        else if(below.front.type == tok!"{")
-            balance++;
-        below.popFront();
-    }
-}*/
 
 string findArtifact(ref Result r){
     auto tokens = tokenStreams[r.file];
@@ -158,6 +145,55 @@ struct Comment{
     string comment;
 }
 
+struct BlacklistEntry{
+    string mod;
+    string pattern;
+    bool match(string mod, string artifact) pure {
+        return this.mod == mod && matchPattern(artifact, pattern);
+    }
+}
+
+bool matchPattern(string s, string pat) pure {
+    while(!pat.empty){
+        auto f = pat.front;
+        switch(f){
+            case '*':
+                pat.popFront();
+                if(pat.empty)
+                    return true; // '*' matches anything till  the end
+                auto n = pat.front;
+                // until next character matches
+                for(;;){
+                    if(s.empty)
+                        return false;
+                    if(s.front != n)
+                        s.popFront();
+                    else
+                        break;
+                }
+                assert(s.front == n);
+                pat.popFront();
+                s.popFront();
+                break;
+            default:
+                if(!s.empty && f == s.front){
+                    pat.popFront();
+                    s.popFront();
+                }
+                else
+                    return false;
+        }
+    }
+    return s.empty;
+}
+
+unittest{
+    assert(matchPattern("abcddd", "a*ddd"));
+    assert(matchPattern("aaaafdsfbbbasd", "aaaa*b*"));
+}
+
+BlacklistEntry[] blacklist;
+
 Comment[] talk; // comments
 
 // identified source-code entity
@@ -208,6 +244,18 @@ else void main(){
         stderr.writefln("talk.gchunt loaded: %d comments.", talk.length);
     }
     catch(Exception){} // was that FileException?
+    try{
+        auto f = File("blacklist.gchunt");
+        stderr.writeln("Found blacklist.gchunt ...");
+        foreach(line; f.byLine) {
+            auto m = line.matchFirst(`^(\S+)\s*:\s*(.+)`);
+            if(m){
+                blacklist ~= BlacklistEntry(m[1].idup, m[2].idup);
+            }
+        }
+        stderr.writefln("blacklist.gchunt loaded: %d patterns.", blacklist.length);
+    }
+    catch(Exception){}
     foreach(r; results){
         //writeln(r.file, ",", r.line, ",", r.reason);
         auto mod = r.file.replace("/", ".");
@@ -234,7 +282,7 @@ else void main(){
 ! Reason
 ! Possible Fix(es)
 |-`);
-    stderr.writeln("Total number of GC-happy functions: ", accum.length);
+    stderr.writefln("Total number of GC-happy artifacts: %s.", accum.length);
     int attached = 0;
     foreach(ref art; accum){
         string[] comments;
@@ -248,16 +296,24 @@ else void main(){
         }
     }
     if(talk.length) //  talk.gchunt file was loaded
-        stderr.writefln("Successfully attached %d comments", attached);
+        stderr.writefln("Successfully attached %d comments.", attached);
+    int filtered = 0;
     foreach(art; accum){
+        if(blacklist.canFind!(black => black.match(art.mod, art.id))){
+            filtered++;
+            continue; // skip over if matches blacklist
+        }
         art.reasons.sort();
         string reason = art.reasons.join(";\n");
         string links;
-        foreach(i, loc; art.locs)
+        foreach(i, loc; art.locs){
             links ~= format(linkTemplate, gitHost, gitRepo, gitHash, 
                 art.mod.replace(".","/"), loc, i+1);
+        }
         writef("|%s\n|%s\n|%s\n| %s\n|-\n", art.mod, art.id, 
             reason~"  "~links, art.comment);
     }
     writeln("|}");
+    if(blacklist.length)
+        stderr.writefln("Filtered %d artifacts.", filtered);
 }
