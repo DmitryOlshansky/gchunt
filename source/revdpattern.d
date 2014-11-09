@@ -551,9 +551,10 @@ if (isRandomAccessRange!(Range) && hasLength!Range)`,
     auto parseAgg = reverseAggregateDeclaration(sink);
     parseAgg.checkRevParse(
         `class A : B, c`, `struct Range(T) if( ABC())`,
-        `class A if(R!C) : D,E`, `template XYZ() if()`
+        `class A if(R!C) : D,E`, `template XYZ() if()`,
+        `template WriteToString()`
     );
-
     //TODO: fix captures
-    assert(ids == ["A", "Range", "Range", "A", "XYZ","XYZ","XYZ"]);
+    assert(ids == ["A", "Range", "Range", "A", "XYZ","XYZ","XYZ", 
+        "WriteToString", "WriteToString", "WriteToString"]);
 }

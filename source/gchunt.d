@@ -62,8 +62,11 @@ string locateFunction(ref Token[] tokens){
 
 string locateAggregate(ref Token[] tokens){
     string id;
-    enum dg = (Token[] ts){
-        id = ts[0].text.dup;
+    auto dg = (Token[] ts){
+        if (ts[0].type == tok!"this")
+            id = "this";
+        else
+            id = ts[0].text.dup;
     };
     with(factory){
         auto matcher = any(reverseAggregateDeclaration(dg), 
@@ -91,9 +94,13 @@ bool blockContains(Token[] blockStart, Token[] position)
 string findArtifact(ref Result r){
     auto tokens = tokenStreams[r.file];
     size_t start = to!size_t(r.line)-1;
-    //BUG: libdparse only takes mutable bytes and returns const tokens?!! WAT, seriously
     auto tk_current = find!(t => t.line == start + 1)(tokens);
-    auto upper_half = tokens[0 .. $ - tk_current.length].dup;
+    // skip to the first token not on this line
+    tk_current = find!(t => t.line != start + 1)(tk_current);
+    auto upper_half = tokens[0 .. $ - tk_current.length - 1].dup;
+    // try to assess if it's a single-line function
+    if(!upper_half.empty && upper_half.back == tok!"}")
+        upper_half.popBack();
     upper_half.reverse(); // look at it backwards
     // get id
     string id = locateFunction(upper_half);
