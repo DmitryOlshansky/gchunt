@@ -298,10 +298,10 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
         +/
         auto block = revBalanced(dtok!"{", dtok!"}");
         auto funcContract = any(
-            revSeq(dtok!"in", block.optional, dtok!"body"),
-            revSeq(dtok!"out", revBalanced.optional, block.optional, dtok!"body"),
             revSeq(dtok!"in", block.optional, dtok!"out", revBalanced.optional, 
                 block.optional, dtok!"body"),
+            revSeq(dtok!"in", block.optional, dtok!"body"),
+            revSeq(dtok!"out", revBalanced.optional, block.optional, dtok!"body"),
         );
         auto primeExpr = any(
             dtok!"intLiteral", dtok!"characterLiteral",
@@ -482,8 +482,8 @@ auto reverseAggregateDeclaration(void delegate(Token[]) idSink=null){
                 ).optional, // base class list
                 constraint.optional // another position for constraint
             ),
-            revSeq(dtok!"struct",  name, revBalanced, constraint.optional),
-            revSeq(dtok!"template", name, revBalanced, constraint.optional)
+            revSeq(dtok!"struct",  name, revBalanced.optional, constraint.optional),
+            revSeq(dtok!"template", name, revBalanced.optional, constraint.optional)
         );
     }
 }
@@ -523,10 +523,21 @@ if (isRandomAccessRange!(Range) && hasLength!Range)`,
 if (isIterable!Range && !isNarrowString!Range && !isInfinite!Range)`,
 `receiveOnlyRet!(T) receiveOnly(T...)() in{ assert(); }body`,
 `void toString(scope void delegate(const(char)[]) sink, ref FormatSpec!char f) const`,
-`this()`
-    );
+`this()`,
+`void reserve(size_t nbytes)
+in
+{
+assert(offset + nbytes >= offset);
+}
+out
+{
+assert(offset + nbytes <= data.length);
+}
+body
+`);
     assert(ids == ["topN", "isKeyword", "path", "cycle", "array", "receiveOnly",
-        "toString", "this"]);
+        "toString", "this", "reserve"]);
+    ids = [];
     revParser.checkRevParse!false(
 `topN(alias less = "a < b", Range)(Range r, size_t nth)
 if (isRandomAccessRange!(Range) && hasLength!Range)`,
@@ -535,8 +546,7 @@ if (isRandomAccessRange!(Range) && hasLength!Range)`,
 `struct Levenshtein(Range, alias equals, CostType = size_t)`
     );
     // id's reached before failure are also added
-    assert(ids == ["topN", "isKeyword", "path", "cycle", "array", "receiveOnly",
-        "toString", "this", "topN", "isKeyword", "Levenshtein"]);
+    assert(ids == ["topN", "isKeyword", "Levenshtein"]);
     ids = [];
     auto parseAgg = reverseAggregateDeclaration(sink);
     parseAgg.checkRevParse(

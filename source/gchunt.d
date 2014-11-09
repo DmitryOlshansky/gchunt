@@ -147,7 +147,7 @@ Token[][string] tokenStreams;
 
 struct Comment{
     string mod;
-    int loc;
+    string artifact;
     string comment;
 }
 
@@ -195,7 +195,7 @@ else void main(){
         foreach(line; f.byLine) {
             auto m = line.matchFirst(`^([^:]+):([^:]+):(.*)`);
             if(m){
-                talk ~= Comment(m[1].idup, m[2].to!int, m[3].idup);
+                talk ~= Comment(m[1].idup, m[2].idup, m[3].idup);
             }
         }
         stderr.writefln("talk.gchunt loaded: %d comments.", talk.length);
@@ -232,7 +232,7 @@ else void main(){
     foreach(ref art; accum){
         string[] comments;
         foreach(i, t; talk)
-            if(t.mod == art.mod && art.locs.canFind(t.loc)){
+            if(t.mod == art.mod && art.id == t.artifact){
                 comments ~= t.comment;                
             }
         if(comments.length){
