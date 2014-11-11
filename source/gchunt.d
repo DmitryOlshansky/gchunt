@@ -211,6 +211,29 @@ struct Artifact{
 
 Artifact[string] artifacts;
 
+// load comments from wiki dump
+void loadComments(string path){
+    auto lines = File(path).byLine.map!(x => x.idup).array;
+    string[] record;
+    foreach(i, line; lines){
+        if(line.startsWith("!"))
+            continue;
+        if(line.startsWith("|-")){
+            if(record.length && record[3].length){
+                talk ~= Comment(record[0], record[1], record[3]);
+            }
+            record.length = 0;
+            record.assumeSafeAppend();
+            continue;
+        }
+        if(line.startsWith("|}"))
+            break;
+        auto m = line.matchFirst(`^\|\s*(.*)`);
+        if(m)
+            record ~= m[1];
+    }
+}
+
 version(unittest) void main(){}
 else void main(){
     string fmt = "mediawiki";
@@ -237,14 +260,7 @@ else void main(){
         //TODO: generate new "vgc" records for each .(i)dup
     }
     try{
-        auto f = File("talk.gchunt");
-        stderr.writeln("Found talk.gchunt ...");
-        foreach(line; f.byLine) {
-            auto m = line.matchFirst(`^([^:]+):([^:]+):(.*)`);
-            if(m){
-                talk ~= Comment(m[1].idup, m[2].idup, m[3].idup);
-            }
-        }
+        loadComments("talk.gchunt");
         stderr.writefln("talk.gchunt loaded: %d comments.", talk.length);
     }
     catch(Exception){} // was that FileException?
@@ -316,7 +332,7 @@ else void main(){
                     art.mod.replace(".","/"), loc, i+1);
             }
             return links;
-        }).join("\n");
+        }).join("\n\n");
         writef("|%s\n|%s\n|%s\n| %s\n|-\n", art.mod, art.id, 
             reason, art.comment);
     }
