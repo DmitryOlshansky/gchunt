@@ -196,12 +196,16 @@ BlacklistEntry[] blacklist;
 
 Comment[] talk; // comments
 
+struct Reason{
+    string reason;
+    int[] locs;
+}
+
 // identified source-code entity
 struct Artifact{
-    int[] locs;
     string id;
     string mod;
-    string[] reasons;
+    Reason[] reasons;
     string comment;
 }
 
@@ -261,14 +265,15 @@ else void main(){
         auto mod = r.file.replace("/", ".");
         auto artifact = findArtifact(r);
         auto path = mod~":"~artifact;
-        if(path in artifacts){
-            artifacts[path].locs ~= to!int(r.line);
+        if(path !in artifacts){
+            artifacts[path] = Artifact(artifact, mod);
         }
-        else{
-            artifacts[path] = Artifact([to!int(r.line)], artifact, mod);
+        auto idx = artifacts[path].reasons.countUntil!(x => x.reason == r.reason);
+        if(idx < 0) {
+            artifacts[path].reasons ~= Reason(r.reason, [to!int(r.line)]);
         }
-        if(!artifacts[path].reasons.canFind(r.reason))
-            artifacts[path].reasons ~= r.reason;
+        else
+            artifacts[path].reasons[idx].locs ~= to!int(r.line);
     }
     auto accum = artifacts.values();
     accum.sort!((a,b) => a.mod < b.mod || (a.mod == b.mod && a.id < b.id));
@@ -303,15 +308,17 @@ else void main(){
             filtered++;
             continue; // skip over if matches blacklist
         }
-        art.reasons.sort();
-        string reason = art.reasons.join(";\n");
-        string links;
-        foreach(i, loc; art.locs){
-            links ~= format(linkTemplate, gitHost, gitRepo, gitHash, 
-                art.mod.replace(".","/"), loc, i+1);
-        }
+        art.reasons.sort!((a,b) => a.reason < b.reason);
+        string reason = art.reasons.map!((r){
+            string links = r.reason~":";
+            foreach(i, loc; r.locs){
+                links ~= format(linkTemplate, gitHost, gitRepo, gitHash, 
+                    art.mod.replace(".","/"), loc, i+1);
+            }
+            return links;
+        }).join("\n");
         writef("|%s\n|%s\n|%s\n| %s\n|-\n", art.mod, art.id, 
-            reason~"  "~links, art.comment);
+            reason, art.comment);
     }
     writeln("|}");
     if(blacklist.length)
