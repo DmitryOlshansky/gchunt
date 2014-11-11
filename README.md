@@ -35,6 +35,26 @@ grep -c vgc out.vgc # count all 'vgc' words
 # with MediaWiki syntax support (e.g. GitHub)
 ```
 
+## Advanced usage
+
+### Reloading old comments
+
+If gchunt finds talk.gchunt in the current directory, it assumes this contains wiki table with user comments from some previous run. Comments are parsed from this wiki dump and attached (these that can be matched) to the same artifacts in this run. This allows iterative work on a GC usage of a project in parallel with its development.
+
+### Blacklisting
+
+If gchunt finds blacklist.gchunt in the current directory it's used to blacklist output of various artifacts.
+
+The file format is simple `module:pattern` on each line.
+Pattern matching follows simple convention that `*` is anything that doesn't look like the next character (in the pattern). `**` is then matches a single star (note: that identifiers can't contain a star anyway).
+
+Example for phobos:
+```
+std.typecons:MemberFunctionGenerator.*
+std.internal.digest.sha_SSSE3:*
+std.typecons:Tuple.injectNamedFields
+```
+Which blacklists all output for std.internal.digest.sha_SSE3 (a CTFE-heavy module), specifically singles out Tuple.injectNamedFields in std.typecons (again CTFE) and everything that starts with MemberFunctionGenerator.
 
 ## Building
 
