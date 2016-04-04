@@ -1,10 +1,10 @@
 //Written in the D programming language
-/**
+/++
     gchunt - a tool to post-process -vgc compiler logs into 
     a neat report table with source links.
 
     Current use case - @nogc Phobos.
-*/
++/
 module gchunt;
 
 import std.algorithm, std.conv, std.stdio, std.string, std.exception,
