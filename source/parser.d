@@ -1,30 +1,29 @@
 //Written in the D programming language
-/**
-   Pattern-matching a subset of D grammar backwards.
 
-*/
-module revdpattern;
-
-import std.algorithm, std.range;
-
-// libdparse
+// libdparse:
 import dparse.lexer;
 
 import matcher;
+
+import std.range;
 
 alias TS = Token[]; // token stream
 alias DMatcher = Matcher!TS;
 alias factory = matcherFactory!TS;
 
-auto reversed(T)(T[] arr){ 
-    arr.reverse();
-    return arr;
+void checkParse(bool sucessful=true, size_t line = __LINE__)(DMatcher m, string[] dsource...){
+    auto internCache = StringCache(2048);
+    auto config = LexerConfig("test.d", StringBehavior.compiler);
+    import std.conv;
+    foreach(i,ds; dsource){
+        //BUG: libdparse - mutable input but const output - this is nuts!
+        TS ts = getTokensForParser(cast(ubyte[])ds.dup, 
+            config, &internCache).dup;
+        assert(ts.matches(m) ^ !sucessful,
+            text("invoked on line ", line, " test #", i));
+    }
 }
 
-// reversed sequence combinator
-auto revSeq(DMatcher[] matchers...){
-    return factory.seq(matchers.reversed); // dups array inside
-}
 
 // Add some matchers
 DMatcher dtok(string id)()
@@ -42,24 +41,23 @@ DMatcher dtok(string id)()
 }
 
 // '(', something ()-balanced ')'
-// matched in reverse!
-DMatcher revBalanced(DMatcher opening=dtok!"(", DMatcher closing=dtok!")")
+DMatcher balanced(DMatcher opening=dtok!"(", DMatcher closing=dtok!")")
 {
     return new class DMatcher{
         bool match(ref TS ts){
             size_t cnt = 0;
-            if(!closing(ts))
+            if(!opening(ts))
                 return false;
             for(;;){
                 if(ts.empty)
                     return cnt == 0;
-                if(closing(ts)){ // we go in reverse, so closing ++count
-                    cnt++;
-                }
-                else if(opening(ts)){
-                    if(cnt == 0) // note: consumed opening
-                        return true;
+                if(closing(ts)){
                     cnt--;
+                }
+                else if(closing(ts)){
+                    if(cnt == 0) // note: consumed closing
+                        return true;
+                    cnt++;
                 }
                 else
                     ts.popFront();
@@ -83,43 +81,41 @@ DMatcher builtinType(){
 DFunc:
     (storageClass | type) Identifier templateParameters parameters 
     memberFunctionAttribute* constraint? 
-
-But in reverse!
 +/
-DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
+DMatcher funcDeclaration(void delegate(Token[]) idSink=null){
     with(factory){
         auto funcCallExpr = any();  // for referencing, will fill in later
         auto type = seq(); // ditto
-        auto constraint = revSeq(
-            dtok!"if", revBalanced
+        auto constraint = seq(
+            dtok!"if", balanced
         );
         // '@' (Identifier | '(' argumentList ')' | functionCallExpression)
-        auto atAttribute = revSeq(
+        auto atAttribute = seq(
             dtok!"@",
             any(
                 dtok!"identifier",
-                revBalanced,
+                balanced,
                 funcCallExpr
             )
         );
         
         //   '!' ('(' templateArgumentList? ')' | templateSingleArgument)")
-        auto templateArguments = revSeq(
+        auto templateArguments = seq(
             dtok!"!", any(
-                revBalanced,
+                balanced,
                 dot // must be 2nd
             )
         );
 
         version(unittest){
-            constraint.checkRevParse(
+            constraint.checkParse(
                 `if ( isInputRange!R && !is(ElementType!E : T))`
             );
-            atAttribute.checkRevParse(
+            atAttribute.checkParse(
                 `@myAttr`, `@(something ,wicked and ()-balanced)`
             );
             // can't test functionCall expr here, linked later
-            templateArguments.checkRevParse(
+            templateArguments.checkParse(
                 `!(a,b,c)`, `!zyx`, `!super`
             );
         }
@@ -154,7 +150,7 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
         auto storageClass = any(
             atAttribute,
             typeConstructor,
-            revSeq(dtok!"deprecated", revBalanced),
+            seq(dtok!"deprecated", balanced),
             dtok!"abstract",
             dtok!"auto",
             dtok!"enum",
@@ -170,7 +166,7 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             dtok!"synchronized"
         );
         version(unittest)
-            storageClass.checkRevParse(
+            storageClass.checkParse(
                 `abstract`, `const`, `@uda`, `deprecated(xyz())`
             );
         /++
@@ -185,9 +181,9 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
              | 'public'
         +/
         auto attribute = any(
-            revSeq(
+            seq(
                 any(dtok!"align", dtok!"extern", dtok!"pragma"),
-                revBalanced
+                balanced
             ),
             storageClass,
             dtok!"export",
@@ -196,45 +192,45 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             dtok!"protected",
             dtok!"public"
         );
-        auto idOrTemplateChain = revSeq(
+        auto idOrTemplateChain = seq(
             dtok!"identifier",
             templateArguments.optional
         );
 
         version(unittest){
-            attribute.checkRevParse(
+            attribute.checkParse(
                 `export`, `public`, `align(45)`, `extern(()123)`,
                 `pragma("afd", 3424, a*(-1212))`
             );
-            idOrTemplateChain.checkRevParse(
+            idOrTemplateChain.checkParse(
                 `abc`, `foo!bar`, `foo!(bar,why.in.the!hell)`
             );
         }
-        auto symbol = revSeq(
+        auto symbol = seq(
             dtok!".".optional, idOrTemplateChain
         );
         // 'typeof' '(' (expression | 'return') ')'
-        auto typeofExpression = revSeq(
-            dtok!"typeof", revBalanced
+        auto typeofExpression = seq(
+            dtok!"typeof", balanced
         );
         // type2 -  core part, without suffix and attributes
         auto type2 = any(
+            // symbol matches same tail as typeof branch, so must go lower
+            symbol,
             builtinType,
-            revSeq(
+            seq(
                 typeofExpression,
-                revSeq(
+                seq(
                     dtok!".", idOrTemplateChain
                 ).optional
             ),
-            // symbol matches same tail as typeof branch, so must go lower
-            symbol,
-            revSeq(
+            seq(
                 typeConstructor, dtok!"(", type, dtok!")"
             )
         );
         //can't test type-constructor part yet
         version(unittest)
-            type2.checkRevParse(
+            type2.checkParse(
                 `.someSymbol!321`, `int`,   `typeof(some(()()(())),stuff)`,
                 `typeof(return).name!foo`, `typeof(ac).xyz`, 
                 `.name!(abc())`, `bar!yxz`
@@ -249,16 +245,16 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
         +/
         auto typeSuffix = any(
             dtok!"*",
-            revBalanced(dtok!"[", dtok!"]"),
-            revSeq(
-                any(dtok!"delegate", dtok!"function"), revBalanced,
+            balanced(dtok!"[", dtok!"]"),
+            seq(
+                any(dtok!"delegate", dtok!"function"), balanced,
             )
         );
         //attribute? type2 typeSuffix*
-        type ~= revSeq(attribute.optional, type2, typeSuffix.star);
+        type ~= seq(attribute.optional, type2, typeSuffix.star);
 
         version(unittest)
-            type.checkRevParse();
+            type.checkParse();
         /++
          identifierOrTemplateInstance
          | '.' identifierOrTemplateInstance
@@ -296,12 +292,12 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
          | StringLiteral+
          | CharacterLiteral
         +/
-        auto block = revBalanced(dtok!"{", dtok!"}");
+        auto block = balanced(dtok!"{", dtok!"}");
         auto funcContract = any(
-            revSeq(dtok!"in", block.optional, dtok!"out", revBalanced.optional, 
+            seq(dtok!"in", block.optional, dtok!"out", balanced.optional, 
                 block.optional, dtok!"body"),
-            revSeq(dtok!"in", block.optional, dtok!"body"),
-            revSeq(dtok!"out", revBalanced.optional, block.optional, dtok!"body"),
+            seq(dtok!"in", block.optional, dtok!"body"),
+            seq(dtok!"out", balanced.optional, block.optional, dtok!"body"),
         );
         auto primeExpr = any(
             dtok!"intLiteral", dtok!"characterLiteral",
@@ -311,28 +307,28 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             dtok!"__VENDOR__", dtok!"__VERSION__",
             dtok!"$", dtok!"this", dtok!"super", 
             dtok!"null", dtok!"true", dtok!"false",
-            revSeq(builtinType, dtok!".", dtok!"identifier"),
+            seq(builtinType, dtok!".", dtok!"identifier"),
             // typeid, typeof, vector, is, mixin, __traits expressions
-            revSeq(
+            seq(
                 any(
                     dtok!"typeid", dtok!"typeof", dtok!"__vector", 
                     dtok!"is", dtok!"mixin", dtok!"__traits"
                 ),
-                revBalanced
+                balanced
             ),
             //TODO: lambda expression
             // functionLiteral expression
-            revSeq(
-                revSeq(any(dtok!"function", dtok!"delegate"), type.optional).optional,
-                revSeq(revBalanced, functionAttribute.star).optional,
+            seq(
+                seq(any(dtok!"function", dtok!"delegate"), type.optional).optional,
+                seq(balanced, functionAttribute.star).optional,
                 //in/out/body 
                 funcContract.optional,
                 block
             ),
             // array & AA literals
-            revBalanced(dtok!"[", dtok!"]"),
+            balanced(dtok!"[", dtok!"]"),
             idOrTemplateChain,
-            revBalanced // expression
+            balanced // expression
         );
         version(unittest)
             primeExpr.checkRevParse(
@@ -353,31 +349,31 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             newAnonClassExpression:
                 'new' arguments? 'class' arguments? baseClassList? structBody
         +/
-        auto baseClass = revSeq(
-            revSeq(typeofExpression, dtok!".").optional, idOrTemplateChain
+        auto baseClass = seq(
+            seq(typeofExpression, dtok!".").optional, idOrTemplateChain
         );
          // core part of unary expr
         auto unaryExpr2 = any(
-            revSeq(
+            seq(
                 dtok!"new", type, 
                 any(
-                    revBalanced(dtok!"[", dtok!"]"), 
-                    revBalanced.optional
+                    balanced(dtok!"[", dtok!"]"), 
+                    balanced.optional
                 )
             ),
-            revSeq(
-                dtok!"new", revBalanced.optional, dtok!"class", revBalanced.optional, 
+            seq(
+                dtok!"new", balanced.optional, dtok!"class", balanced.optional, 
                 // base classes list
-                revSeq(baseClass, revSeq(dtok!",", baseClass).optional),
+                seq(baseClass, seq(dtok!",", baseClass).optional),
                 // class body
-                revBalanced(dtok!"{", dtok!"}")
+                balanced(dtok!"{", dtok!"}")
             ),
             funcCallExpr,
-            revSeq(
+            seq(
                 dtok!"(", type, dtok!")", dtok!".",
                 idOrTemplateChain
             ),
-            revSeq(dtok!"assert", revBalanced),
+            seq(dtok!"assert", balanced),
 
             primeExpr // last thing to try
         );
@@ -385,11 +381,11 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             dtok!"const", dtok!"inout", dtok!"shared", dtok!"immutable", dtok!""
         ).star;
         // *-adornments on top of core unary expr
-        unaryExpr ~= revSeq(
+        unaryExpr ~= seq(
             any(      
                 dtok!"&", dtok!"!",dtok!"*",dtok!"+",dtok!"-",dtok!"~",
                 dtok!"++", dtok!"--", dtok!"delete",
-                revSeq(
+                seq(
                     dtok!"cast", dtok!"(", 
                     any(type, castQualifier).optional, dtok!")"
                 )
@@ -397,22 +393,22 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             unaryExpr2,
             any(
                 dtok!"++", dtok!"--", 
-                revSeq(dtok!".", idOrTemplateChain),
+                seq(dtok!".", idOrTemplateChain),
                 // or slice/index exprs
-                revBalanced(dtok!"[", dtok!"]")
+                balanced(dtok!"[", dtok!"]")
             ).star
         );
       
         // unaryExpression templateArguments? arguments
         // | type arguments
-        funcCallExpr ~= revSeq(
-            unaryExpr, templateArguments.optional, revBalanced
+        funcCallExpr ~= seq(
+            unaryExpr, templateArguments.optional, balanced
         );
-        funcCallExpr ~= revSeq(
-            type, revBalanced
+        funcCallExpr ~= seq(
+            type, balanced
         );
         version(unittest)
-            unaryExpr.checkRevParse(
+            unaryExpr.checkParse(
             );
         auto functionId = dtok!"identifier";
         auto constructorId = dtok!"this";
@@ -421,19 +417,19 @@ DMatcher reverseFuncDeclaration(void delegate(Token[]) idSink=null){
             constructorId = constructorId.captureTo(idSink);
         }
 
-        auto constructoDecl = revSeq(
+        auto constructoDecl = seq(
             constructorId,
-            revBalanced.optional,
-            revBalanced,
+            balanced.optional,
+            balanced,
             memberFuncAttr.star,
             constraint.optional 
         );
 
-        auto funcDecl = revSeq(
+        auto funcDecl = seq(
             any(storageClass, type),
             functionId,
-            revBalanced.optional,
-            revBalanced,
+            balanced.optional,
+            balanced,
             memberFuncAttr.star,
             constraint.optional,
             funcContract.optional
@@ -454,66 +450,52 @@ in reverse
 templateDeclaration
        'template' Identifier templateParameters constraint? '{' declaration* '}'
 +/
-auto reverseAggregateDeclaration(void delegate(Token[]) idSink=null){
+auto aggregateDeclaration(void delegate(Token[]) idSink=null){
     with(factory){
-        auto templateArguments = revSeq(
+        auto templateArguments = seq(
             dtok!"!", any(
-                revBalanced,
+                balanced,
                 dot // must be 2nd
             )
         );
-        auto idOrTemplateChain = revSeq(
+        auto idOrTemplateChain = seq(
             dtok!"identifier",
             templateArguments.optional
         );
-        auto constraint = revSeq(dtok!"if", revBalanced);
-        auto baseClass = revSeq(
-            revSeq(dtok!"typeof", revBalanced, dtok!".").optional, idOrTemplateChain
+        auto constraint = seq(dtok!"if", balanced);
+        auto baseClass = seq(
+            seq(dtok!"typeof", balanced, dtok!".").optional, idOrTemplateChain
         );
         auto name = dtok!"identifier";
         if(idSink)
             name = name.captureTo(idSink);
         return any(
-            revSeq(
-                dtok!"class", name, revBalanced.optional, //template args
+            seq(
+                dtok!"class", name, balanced.optional, //template args
                 constraint.optional, // constraint
-                revSeq(
-                    dtok!":", baseClass, revSeq(dtok!",", baseClass)
+                seq(
+                    dtok!":", baseClass, seq(dtok!",", baseClass)
                 ).optional, // base class list
                 constraint.optional // another position for constraint
             ),
-            revSeq(dtok!"struct",  name, revBalanced.optional, constraint.optional),
-            revSeq(dtok!"template", name, revBalanced.optional, constraint.optional)
+            seq(dtok!"struct",  name, balanced.optional, constraint.optional),
+            seq(dtok!"template", name, balanced.optional, constraint.optional)
         );
-    }
-}
-
-void checkRevParse(bool sucessful=true, size_t line = __LINE__)(DMatcher m, string[] dsource...){
-    auto internCache = StringCache(2048);
-    auto config = LexerConfig("test.d", StringBehavior.compiler);
-    import std.conv;
-    foreach(i,ds; dsource){
-        //BUG: libdparse - mutable input but const output - this is nuts!
-        TS ts = getTokensForParser(cast(ubyte[])ds.dup, 
-            config, &internCache).dup;
-        ts.reverse();
-        assert(ts.matches(m) ^ !sucessful, 
-            text("invoked on line ", line, " test #", i));
     }
 }
 
 unittest{
     with(factory)
-        seq(dtok!")", dtok!"(").checkRevParse("()");
-    revBalanced.checkRevParse("(a(+b)())");
+        seq(dtok!"(", dtok!")").checkParse("()");
+    balanced.checkParse("(a(+b)())");
     string[] ids;
     auto sink = (Token[] slice){
         assert(slice.length == 1);
         ids ~= slice[0].text.length ? slice[0].text.idup : str(slice[0].type).idup;
     };
     // also invokes lots of self-checks
-    auto revParser = reverseFuncDeclaration(sink);
-    revParser.checkRevParse(
+    auto parser = funcDeclaration(sink);
+    parser.checkParse(
 `void topN(alias less = "a < b", Range)(Range r, size_t nth)
 if (isRandomAccessRange!(Range) && hasLength!Range)`,
 `public bool isKeyword(IdType type) pure nothrow @safe`,
@@ -538,7 +520,7 @@ body
     assert(ids == ["topN", "isKeyword", "path", "cycle", "array", "receiveOnly",
         "toString", "this", "reserve"]);
     ids = [];
-    revParser.checkRevParse!false(
+    revParser.checkParse!false(
 `topN(alias less = "a < b", Range)(Range r, size_t nth)
 if (isRandomAccessRange!(Range) && hasLength!Range)`,
 `public bool isKeyword((IdType type) pure nothrow @safe`,

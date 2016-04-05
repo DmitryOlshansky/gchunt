@@ -8,12 +8,12 @@
 module gchunt;
 
 import std.algorithm, std.conv, std.stdio, std.string, std.exception,
-    std.regex, std.range, std.process;
+    std.regex, std.range, std.process, std.getopt;
 
 static import std.file;
 
 // libdparse:
-import std.d.lexer;
+import dparse.lexer;
 // our pattern matching on D tokens
 import revdpattern;
 
@@ -192,9 +192,9 @@ unittest{
     assert(matchPattern("aaaafdsfbbbasd", "aaaa*b*"));
 }
 
-BlacklistEntry[] blacklist;
+BlacklistEntry[] blacklist; //
 
-Comment[] talk; // comments
+// comments
 
 struct Reason{
     string reason;
@@ -212,7 +212,8 @@ struct Artifact{
 Artifact[string] artifacts;
 
 // load comments from wiki dump
-void loadComments(string path){
+Comment[]  loadComments(string path){
+    Comment[] talk; 
     auto lines = File(path).byLine.map!(x => x.idup).array;
     string[] record;
     foreach(i, line; lines){
@@ -232,15 +233,18 @@ void loadComments(string path){
         if(m)
             record ~= m[1];
     }
+    return talk;
 }
 
 version(unittest) void main(){}
-else void main(){
-    string fmt = "mediawiki";
-    string gitHost = `https://github.com`;
-    string gitHash = gitHEAD();
-    string gitRepo = gitRemotePath();
+else void main(string[] args){
+    bool graphMode = false;
+    
     auto re = regex(`(.*[\\/]\w+)\.d\((\d+)\):\s*vgc:\s*(.*)`);
+    auto opts = getopt(args, "graph", &graphMode);
+    if(opts.helpWanted){
+        defaultGetoptPrinter("gchunt - pinpoint GC usage in D apps", opts.options);
+    }
     Result[] results;
     foreach(line; stdin.byLine){
         auto m = line.idup.matchFirst(re);
@@ -251,7 +255,8 @@ else void main(){
     sort!((a,b) => a.file < b.file || (a.file == b.file && a.line < b.line))
         (results);
 
-    results = uniq(results).array;
+    results = uniq(results).array; // deduplicate 
+    // Tokenize modules in question
     auto interned = StringCache(4096);
     foreach(mod;results.map!(x => x.file).uniq){
         auto config = LexerConfig(mod~".d", StringBehavior.compiler);
@@ -259,11 +264,6 @@ else void main(){
         tokenStreams[mod] = getTokensForParser(data, config, &interned).dup;
         //TODO: generate new "vgc" records for each .(i)dup
     }
-    try{
-        loadComments("talk.gchunt");
-        stderr.writefln("talk.gchunt loaded: %d comments.", talk.length);
-    }
-    catch(Exception){} // was that FileException?
     try{
         auto f = File("blacklist.gchunt");
         stderr.writeln("Found blacklist.gchunt ...");
@@ -276,67 +276,84 @@ else void main(){
         stderr.writefln("blacklist.gchunt loaded: %d patterns.", blacklist.length);
     }
     catch(Exception){}
-    foreach(r; results){
-        //writeln(r.file, ",", r.line, ",", r.reason);
-        auto mod = r.file.replace("/", ".");
-        auto artifact = findArtifact(r);
-        auto path = mod~":"~artifact;
-        if(path !in artifacts){
-            artifacts[path] = Artifact(artifact, mod);
-        }
-        auto idx = artifacts[path].reasons.countUntil!(x => x.reason == r.reason);
-        if(idx < 0) {
-            artifacts[path].reasons ~= Reason(r.reason, [to!int(r.line)]);
-        }
-        else
-            artifacts[path].reasons[idx].locs ~= to!int(r.line);
-    }
-    auto accum = artifacts.values();
-    accum.sort!((a,b) => a.mod < b.mod || (a.mod == b.mod && a.id < b.id));
+    if(graphMode){
 
-    string linkTemplate =
-`[%s/%s/blob/%s/%s.d#L%s %d] `;
-    writeln(`
-{| class="wikitable"
-! Module
-! Artifact
-! Reason
-! Possible Fix(es)
-|-`);
-    stderr.writefln("Total number of GC-happy artifacts: %s.", accum.length);
-    int attached = 0;
-    foreach(ref art; accum){
-        string[] comments;
-        foreach(i, t; talk)
-            if(t.mod == art.mod && art.id == t.artifact){
-                comments ~= t.comment;                
-            }
-        if(comments.length){
-            attached += comments.length;
-            art.comment = comments.sort().uniq().join(";");
-        }
     }
-    if(talk.length) //  talk.gchunt file was loaded
-        stderr.writefln("Successfully attached %d comments.", attached);
-    int filtered = 0;
-    foreach(art; accum){
-        if(blacklist.canFind!(black => black.match(art.mod, art.id))){
-            filtered++;
-            continue; // skip over if matches blacklist
+    else {
+        string fmt = "mediawiki";
+        string gitHost = `https://github.com`;
+        string gitHash = gitHEAD();
+        string gitRepo = gitRemotePath();
+        Comment[] talk;
+        try{
+            talk = loadComments("talk.gchunt");
+            stderr.writefln("talk.gchunt loaded: %d comments.", talk.length);
         }
-        art.reasons.sort!((a,b) => a.reason < b.reason);
-        string reason = art.reasons.map!((r){
-            string links = r.reason~":";
-            foreach(i, loc; r.locs){
-                links ~= format(linkTemplate, gitHost, gitRepo, gitHash, 
-                    art.mod.replace(".","/"), loc, i+1);
+        catch(Exception){} // was that FileException?   
+        foreach(r; results){
+            //writeln(r.file, ",", r.line, ",", r.reason);
+            auto mod = r.file.replace("/", ".");
+            auto artifact = findArtifact(r);
+            auto path = mod~":"~artifact;
+            if(path !in artifacts){
+                artifacts[path] = Artifact(artifact, mod);
             }
-            return links;
-        }).join("\n\n");
-        writef("|%s\n|%s\n|%s\n| %s\n|-\n", art.mod, art.id, 
-            reason, art.comment);
+            auto idx = artifacts[path].reasons.countUntil!(x => x.reason == r.reason);
+            if(idx < 0) {
+                artifacts[path].reasons ~= Reason(r.reason, [to!int(r.line)]);
+            }
+            else
+                artifacts[path].reasons[idx].locs ~= to!int(r.line);
+        }
+        auto accum = artifacts.values();
+        accum.sort!((a,b) => a.mod < b.mod || (a.mod == b.mod && a.id < b.id));
+
+        string linkTemplate =
+    `[%s/%s/blob/%s/%s.d#L%s %d] `;
+        writeln(`
+    {| class="wikitable"
+    ! Module
+    ! Artifact
+    ! Reason
+    ! Possible Fix(es)
+    |-`);
+        stderr.writefln("Total number of GC-happy artifacts: %s.", accum.length);
+        int attached = 0;
+        foreach(ref art; accum){
+            string[] comments;
+            foreach(i, t; talk)
+                if(t.mod == art.mod && art.id == t.artifact){
+                    comments ~= t.comment;                
+                }
+            if(comments.length){
+                attached += comments.length;
+                art.comment = comments.sort().uniq().join(";");
+            }
+        }
+        if(talk.length) //  talk.gchunt file was loaded
+            stderr.writefln("Successfully attached %d comments.", attached);
+        int filtered = 0;
+        foreach(art; accum){
+            if(blacklist.canFind!(black => black.match(art.mod, art.id))){
+                filtered++;
+                continue; // skip over if matches blacklist
+            }
+            art.reasons.sort!((a,b) => a.reason < b.reason);
+            string reason = art.reasons.map!((r){
+                string links = r.reason~":";
+                foreach(i, loc; r.locs){
+                    links ~= format(linkTemplate, gitHost, gitRepo, gitHash, 
+                        art.mod.replace(".","/"), loc, i+1);
+                }
+                return links;
+            }).join("\n\n");
+            writef("|%s\n|%s\n|%s\n| %s\n|-\n", art.mod, art.id, 
+                reason, art.comment);
+        }
+        writeln("|}");
+        if(blacklist.length)
+            stderr.writefln("Filtered %d artifacts.", filtered);     
     }
-    writeln("|}");
-    if(blacklist.length)
-        stderr.writefln("Filtered %d artifacts.", filtered);
+
+    
 }
