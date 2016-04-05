@@ -1,12 +1,12 @@
 {
 	"name": "gchunt",
 	"description": "A tool to post-process D compiler's GC usage log",
-	"copyright": "Copyright © 2014, Dmitry Olshansky",
+	"copyright": "Copyright © 2014-2016, Dmitry Olshansky",
 	"authors": ["Dmitry Olshansky"],
 	"dependencies": {
-    "libdparse": ">=0.1.1"
+		"libdparse": ">=0.1.1"
 	},
-  "targetType" : "executable",
-  "mainSourceFile" : "source/gchunt.d",
-  "targetName" : "gchunt"
+	"targetType" : "executable",
+	"mainSourceFile" : "source/gchunt.d",
+	"targetName" : "gchunt"
 }

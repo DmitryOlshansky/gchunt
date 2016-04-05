@@ -240,7 +240,7 @@ version(unittest) void main(){}
 else void main(string[] args){
     bool graphMode = false;
     
-    auto re = regex(`(.*[\\/]\w+)\.d\((\d+)\):\s*vgc:\s*(.*)`);
+    auto re = regex(`(.*[\\/]\w+)\.d\((\d+),\d+\):\s*vgc:\s*(.*)`);
     auto opts = getopt(args, "graph", &graphMode);
     if(opts.helpWanted){
         defaultGetoptPrinter("gchunt - pinpoint GC usage in D apps", opts.options);
@@ -252,18 +252,33 @@ else void main(string[] args){
             results ~= Result(m[1].replace("\\", "/"), m[2], m[3]);
         }
     }
-    sort!((a,b) => a.file < b.file || (a.file == b.file && a.line < b.line))
-        (results);
-
-    results = uniq(results).array; // deduplicate 
+    auto deduplicate(Result[] arr){
+        // deduplicate 
+        sort!((a,b) => a.file < b.file || (a.file == b.file && a.line < b.line))
+            (arr);
+        return uniq(arr).array;
+    }
+    results = deduplicate(results).dup;
     // Tokenize modules in question
     auto interned = StringCache(4096);
     foreach(mod;results.map!(x => x.file).uniq){
         auto config = LexerConfig(mod~".d", StringBehavior.compiler);
         auto data = cast(ubyte[])std.file.read(mod ~ ".d");
         tokenStreams[mod] = getTokensForParser(data, config, &interned).dup;
-        //TODO: generate new "vgc" records for each .(i)dup
     }
+    // generate new "vgc" records for each .(i)dup
+    foreach(mod, toks; tokenStreams){
+        for(auto r = toks;!r.empty;){
+            r = r.findAdjacent!((a,b) => a.type == tok!"." 
+                && b.type == tok!"identifier" && (b.text == "dup" || b.text == "idup"));
+            if(!r.empty){
+                results ~= Result(mod, to!string(r[0].line), "(i)dup allocates on GC heap");
+                r.popFront();
+            }
+        }
+
+    }
+    results = deduplicate(results);
     try{
         auto f = File("blacklist.gchunt");
         stderr.writeln("Found blacklist.gchunt ...");
