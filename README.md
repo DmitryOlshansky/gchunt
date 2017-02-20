@@ -5,7 +5,7 @@ gchunt is a tool is to help D developers identify and keep in check usage of GC 
 
 ## How it works
 
-gchunt transforms a stream of GC usage warnings of a D compiler to a nice wiki table. This relies on 2.066 D frontend feature to print [GC allocation points](http://dlang.org/changelog.html#vgc-switch).
+gchunt transforms a stream of GC usage warnings of a D compiler to a nice wiki table. This relies on 2.066 D frontend feature to print [GC allocation points](http://dlang.org/changelog/2.066.0.html#vgc-switch).
 
 For a given project build log, a wiki-table is generated, with columns containing:
 
